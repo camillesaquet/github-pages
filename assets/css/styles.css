@@ -113,7 +113,9 @@
 
 .btn-primary,
 .btn-secondary,
-.btn-admin {
+.btn-admin,
+.btn-tertiary,
+.btn-danger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -150,6 +152,16 @@
   background-color: rgb(29, 78, 216);
 }
 
+.btn-tertiary {
+  background-color: rgb(243, 244, 246);
+  color: rgb(55, 65, 81);
+  border: 1px solid rgb(229, 231, 235);
+}
+
+.btn-tertiary:hover {
+  background-color: rgb(229, 231, 235);
+}
+
 .modal {
   position: fixed;
   inset: 0;
@@ -183,4 +195,38 @@
 
 .btn-danger:hover {
   background-color: rgb(185, 28, 28);
+}
+
+.admin-tab {
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+  color: rgb(75, 85, 99);
+  border-bottom: 2px solid transparent;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.admin-tab--active {
+  color: rgb(37, 99, 235);
+  border-bottom-color: rgb(37, 99, 235);
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.85rem;
+  border-radius: 9999px;
+  border: 1px solid rgb(209, 213, 219);
+  font-size: 0.875rem;
+  color: rgb(75, 85, 99);
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.filter-chip:hover {
+  background-color: rgb(229, 231, 235);
+}
+
+.filter-chip--active {
+  background-color: rgb(37, 99, 235);
+  border-color: rgb(37, 99, 235);
+  color: #fff;
 }

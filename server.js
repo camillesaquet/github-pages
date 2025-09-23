@@ -19,6 +19,71 @@ async function ensureDirectoryExists(dirPath) {
 
 let db;
 
+async function columnExists(table, column) {
+  const pragma = await db.all(`PRAGMA table_info(${table})`);
+  return pragma.some((entry) => entry.name === column);
+}
+
+async function ensureColumn(table, column, definition) {
+  if (!(await columnExists(table, column))) {
+    await db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+function buildAdminIdentifier(firstName, lastName) {
+  if (!firstName || !lastName) {
+    return null;
+  }
+  const normalizedLastName = lastName.replace(/\s+/g, '').toLowerCase();
+  const prefix = firstName.trim().charAt(0).toLowerCase();
+  return `${prefix}${normalizedLastName}`;
+}
+
+function buildAdminInitials(firstName, lastName) {
+  const firstInitial = firstName ? firstName.trim().charAt(0) : '';
+  const lastInitial = lastName ? lastName.trim().charAt(0) : '';
+  const initials = `${firstInitial}${lastInitial}`.toUpperCase();
+  return initials || 'AA';
+}
+
+async function generateUniqueAdminIdentifier(firstName, lastName) {
+  const base = buildAdminIdentifier(firstName, lastName);
+  if (!base) {
+    return null;
+  }
+
+  let identifier = base;
+  let suffix = 1;
+
+  while (true) {
+    const existing = await db.get('SELECT id FROM admins WHERE identifier = ?', [identifier]);
+    if (!existing) {
+      return identifier;
+    }
+    suffix += 1;
+    identifier = `${base}${suffix}`;
+  }
+}
+
+async function ensureDefaultAdmin() {
+  const existing = await db.get('SELECT COUNT(*) as count FROM admins');
+  if (existing.count > 0) {
+    return;
+  }
+
+  const firstName = 'Laurent';
+  const lastName = 'Saquet';
+  const identifier = await generateUniqueAdminIdentifier(firstName, lastName);
+  const initials = buildAdminInitials(firstName, lastName);
+  const createdAt = new Date().toISOString();
+
+  await db.run(
+    `INSERT INTO admins (first_name, last_name, identifier, initials, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [firstName, lastName, identifier, initials, createdAt]
+  );
+}
+
 async function initDatabase() {
   await ensureDirectoryExists(path.dirname(DB_PATH));
   await ensureDirectoryExists(ATTACHMENTS_DIR);
@@ -50,6 +115,7 @@ async function initDatabase() {
       status TEXT NOT NULL DEFAULT 'pending',
       photo_path TEXT,
       completion_comments TEXT,
+      archived_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY(driver_id) REFERENCES drivers(id) ON DELETE CASCADE
@@ -75,7 +141,18 @@ async function initDatabase() {
       created_at TEXT NOT NULL,
       FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS admins (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL,
+      identifier TEXT NOT NULL UNIQUE,
+      initials TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
   `);
+
+  await ensureColumn('courses', 'archived_at', 'TEXT');
 
   const driverCount = await db.get('SELECT COUNT(*) as count FROM drivers');
   if (driverCount.count === 0) {
@@ -167,6 +244,8 @@ async function initDatabase() {
       }
     }
   }
+
+  await ensureDefaultAdmin();
 }
 
 async function logActivity(courseId, action, user, details = null) {
@@ -258,6 +337,150 @@ app.get('/api/drivers', async (req, res) => {
   }
 });
 
+app.post('/api/drivers', async (req, res) => {
+  try {
+    const { firstName, lastName, email, phone } = req.body;
+
+    if (!firstName || !lastName) {
+      return res.status(400).json({ message: 'Le prénom et le nom sont obligatoires.' });
+    }
+
+    const result = await db.run(
+      `INSERT INTO drivers (first_name, last_name, email, phone) VALUES (?, ?, ?, ?)`,
+      [firstName.trim(), lastName.trim(), email || null, phone || null]
+    );
+
+    const driver = await db.get('SELECT id, first_name, last_name, email, phone FROM drivers WHERE id = ?', [result.lastID]);
+    res.status(201).json(driver);
+  } catch (error) {
+    console.error('Error creating driver', error);
+    res.status(500).json({ message: 'Erreur lors de la création du chauffeur' });
+  }
+});
+
+app.delete('/api/drivers/:id', async (req, res) => {
+  try {
+    const driverId = req.params.id;
+    const driver = await db.get('SELECT * FROM drivers WHERE id = ?', [driverId]);
+
+    if (!driver) {
+      return res.status(404).json({ message: 'Chauffeur introuvable' });
+    }
+
+    await db.run('DELETE FROM drivers WHERE id = ?', [driverId]);
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error deleting driver', error);
+    res.status(500).json({ message: 'Erreur lors de la suppression du chauffeur' });
+  }
+});
+
+app.get('/api/admins', async (req, res) => {
+  try {
+    const rows = await db.all(
+      `SELECT id, first_name, last_name, identifier, initials, created_at FROM admins ORDER BY last_name ASC, first_name ASC`
+    );
+
+    res.json(
+      rows.map((admin) => ({
+        id: admin.id,
+        firstName: admin.first_name,
+        lastName: admin.last_name,
+        identifier: admin.identifier,
+        initials: admin.initials,
+        createdAt: admin.created_at,
+      }))
+    );
+  } catch (error) {
+    console.error('Error fetching admins', error);
+    res.status(500).json({ message: "Erreur lors de la récupération des comptes administrateurs" });
+  }
+});
+
+app.post('/api/admins', async (req, res) => {
+  try {
+    const { firstName, lastName } = req.body;
+
+    if (!firstName || !lastName) {
+      return res.status(400).json({ message: 'Le prénom et le nom sont obligatoires.' });
+    }
+
+    const identifier = await generateUniqueAdminIdentifier(firstName, lastName);
+    if (!identifier) {
+      return res.status(400).json({ message: "Impossible de générer l'identifiant administrateur." });
+    }
+
+    const initials = buildAdminInitials(firstName, lastName);
+    const createdAt = new Date().toISOString();
+
+    const result = await db.run(
+      `INSERT INTO admins (first_name, last_name, identifier, initials, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [firstName.trim(), lastName.trim(), identifier, initials, createdAt]
+    );
+
+    const admin = await db.get('SELECT id, first_name, last_name, identifier, initials, created_at FROM admins WHERE id = ?', [
+      result.lastID,
+    ]);
+
+    res.status(201).json({
+      id: admin.id,
+      firstName: admin.first_name,
+      lastName: admin.last_name,
+      identifier: admin.identifier,
+      initials: admin.initials,
+      createdAt: admin.created_at,
+    });
+  } catch (error) {
+    console.error('Error creating admin', error);
+    res.status(500).json({ message: "Erreur lors de la création du compte administrateur" });
+  }
+});
+
+app.post('/api/admins/login', async (req, res) => {
+  try {
+    const { identifier, firstName, lastName } = req.body;
+
+    if (!identifier && (!firstName || !lastName)) {
+      return res.status(400).json({ message: 'Identifiant ou couple prénom/nom requis.' });
+    }
+
+    let admin;
+
+    if (identifier) {
+      admin = await db.get(
+        'SELECT id, first_name, last_name, identifier, initials, created_at FROM admins WHERE LOWER(identifier) = ?',
+        [identifier.toLowerCase()]
+      );
+    }
+
+    if (!admin && firstName && lastName) {
+      admin = await db.get(
+        `SELECT id, first_name, last_name, identifier, initials, created_at
+         FROM admins
+         WHERE LOWER(first_name) = ? AND LOWER(last_name) = ?`,
+        [firstName.trim().toLowerCase(), lastName.trim().toLowerCase()]
+      );
+    }
+
+    if (!admin) {
+      return res.status(404).json({ message: 'Compte administrateur introuvable.' });
+    }
+
+    res.json({
+      id: admin.id,
+      firstName: admin.first_name,
+      lastName: admin.last_name,
+      identifier: admin.identifier,
+      initials: admin.initials,
+      createdAt: admin.created_at,
+    });
+  } catch (error) {
+    console.error('Error logging admin', error);
+    res.status(500).json({ message: 'Erreur lors de la connexion administrateur' });
+  }
+});
+
 app.get('/api/drivers/:id', async (req, res) => {
   try {
     const driver = await db.get('SELECT id, first_name, last_name, email, phone FROM drivers WHERE id = ?', [
@@ -277,13 +500,19 @@ app.get('/api/drivers/:id', async (req, res) => {
 
 app.get('/api/courses', async (req, res) => {
   try {
-    const { driverId, from, to } = req.query;
+    const { driverId, from, to, archived } = req.query;
     const conditions = [];
     const params = [];
 
     if (driverId) {
       conditions.push('driver_id = ?');
       params.push(driverId);
+    }
+
+    if (archived === 'true') {
+      conditions.push('archived_at IS NOT NULL');
+    } else if (archived !== 'all') {
+      conditions.push('archived_at IS NULL');
     }
 
     if (from) {
@@ -319,6 +548,7 @@ app.get('/api/courses', async (req, res) => {
         status: row.status,
         photoUrl: row.photo_path ? `/storage/attachments/${path.basename(row.photo_path)}` : null,
         completionComments: row.completion_comments,
+        archivedAt: row.archived_at,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       }))
@@ -355,6 +585,7 @@ app.get('/api/courses/:id', async (req, res) => {
       status: row.status,
       photoUrl: row.photo_path ? `/storage/attachments/${path.basename(row.photo_path)}` : null,
       completionComments: row.completion_comments,
+      archivedAt: row.archived_at,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     });
@@ -375,9 +606,18 @@ app.post('/api/courses', async (req, res) => {
     const now = new Date().toISOString();
     const result = await db.run(
       `INSERT INTO courses
-        (driver_id, date_time, departure, destination, merchandise, comments, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-      [driverId, new Date(dateTime).toISOString(), departure, destination, merchandise || null, comments || null, now, now]
+        (driver_id, date_time, departure, destination, merchandise, comments, status, archived_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?)`,
+      [
+        driverId,
+        new Date(dateTime).toISOString(),
+        departure,
+        destination,
+        merchandise || null,
+        comments || null,
+        now,
+        now,
+      ]
     );
 
     const course = await db.get('SELECT * FROM courses WHERE id = ?', [result.lastID]);
@@ -457,6 +697,52 @@ app.delete('/api/courses/:id', async (req, res) => {
   }
 });
 
+app.post('/api/courses/:id/archive', async (req, res) => {
+  try {
+    const courseId = req.params.id;
+    const { user } = req.body;
+
+    const course = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    if (!course) {
+      return res.status(404).json({ message: 'Course introuvable' });
+    }
+
+    const archivedAt = new Date().toISOString();
+    await db.run('UPDATE courses SET archived_at = ?, updated_at = ? WHERE id = ?', [archivedAt, archivedAt, courseId]);
+    await logActivity(courseId, 'archived', user || 'LS', 'Course archivée');
+
+    res.json({ message: 'Course archivée', archivedAt });
+  } catch (error) {
+    console.error('Error archiving course', error);
+    res.status(500).json({ message: "Erreur lors de l'archivage de la course" });
+  }
+});
+
+app.post('/api/courses/:id/unarchive', async (req, res) => {
+  try {
+    const courseId = req.params.id;
+    const { user } = req.body;
+
+    const course = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    if (!course) {
+      return res.status(404).json({ message: 'Course introuvable' });
+    }
+
+    if (!course.archived_at) {
+      return res.status(400).json({ message: 'Course déjà active' });
+    }
+
+    const updatedAt = new Date().toISOString();
+    await db.run('UPDATE courses SET archived_at = NULL, updated_at = ? WHERE id = ?', [updatedAt, courseId]);
+    await logActivity(courseId, 'restored', user || 'LS', 'Course désarchivée');
+
+    res.json({ message: 'Course restaurée' });
+  } catch (error) {
+    console.error('Error unarchiving course', error);
+    res.status(500).json({ message: 'Erreur lors de la restauration de la course' });
+  }
+});
+
 app.post('/api/courses/:id/complete', async (req, res) => {
   try {
     const courseId = req.params.id;
@@ -503,7 +789,7 @@ app.get('/api/activity', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit, 10) || 50;
     const rows = await db.all(
-      `SELECT a.*, c.departure, c.destination, c.date_time, d.first_name, d.last_name
+      `SELECT a.*, c.departure, c.destination, c.date_time, c.archived_at, d.first_name, d.last_name
        FROM activity_log a
        LEFT JOIN courses c ON c.id = a.course_id
        LEFT JOIN drivers d ON d.id = c.driver_id
@@ -526,6 +812,7 @@ app.get('/api/activity', async (req, res) => {
               destination: row.destination,
               dateTime: row.date_time,
               driverName: row.first_name && row.last_name ? `${row.first_name} ${row.last_name}` : null,
+              archivedAt: row.archived_at,
             }
           : null,
       }))

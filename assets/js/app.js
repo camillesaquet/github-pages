@@ -4,10 +4,24 @@ const state = {
   drivers: [],
   driverCourses: [],
   adminCourses: [],
+  archivedCourses: [],
   activityLog: [],
   courseCache: new Map(),
   currentUser: null,
   isAdmin: false,
+  admins: [],
+  adminFilters: {
+    driverId: 'all',
+    range: 'week',
+  },
+  archiveFilters: {
+    driverId: 'all',
+    merchandise: 'all',
+    period: 'week',
+    from: null,
+    to: null,
+  },
+  adminView: 'planning',
   currentCourseId: null,
   photoDataUrl: null,
   pendingCompletionComments: '',
@@ -24,6 +38,7 @@ const elements = {
   logoutBtn: document.getElementById('logout-btn'),
   adminLogoutBtn: document.getElementById('admin-logout-btn'),
   driverNameDisplay: document.getElementById('driver-name'),
+  adminIdentifierDisplay: document.getElementById('admin-identifier'),
   todayTab: document.getElementById('today-tab'),
   weekTab: document.getElementById('week-tab'),
   newCourseTab: document.getElementById('new-course-tab'),
@@ -40,6 +55,7 @@ const elements = {
   activityLogList: document.getElementById('activity-log'),
   noActivity: document.getElementById('no-activity'),
   newCourseAdminBtn: document.getElementById('new-course-admin'),
+  adminRangeButtons: document.querySelectorAll('[data-admin-range]'),
   addCourseForm: document.getElementById('add-course-form'),
   adminDriverField: document.getElementById('admin-driver-field'),
   adminDriverPicker: document.getElementById('admin-driver-picker'),
@@ -77,6 +93,34 @@ const elements = {
   courseEditorComments: document.getElementById('course-editor-comments'),
   cancelCourseEditorBtn: document.getElementById('cancel-course-editor'),
   closeCourseEditorBtn: document.getElementById('close-course-editor'),
+  adminLoginModal: document.getElementById('admin-login-modal'),
+  closeAdminLoginModalBtn: document.getElementById('close-admin-login'),
+  adminLoginForm: document.getElementById('admin-login-form'),
+  adminIdentifierInput: document.getElementById('admin-identifier-input'),
+  adminAccountsList: document.getElementById('admin-accounts'),
+  adminCreateForm: document.getElementById('admin-create-form'),
+  adminCreateFirstName: document.getElementById('admin-create-first-name'),
+  adminCreateLastName: document.getElementById('admin-create-last-name'),
+  adminIdentifierPreview: document.getElementById('admin-identifier-preview'),
+  adminIdentifierPreviewValue: document.getElementById('admin-identifier-preview-value'),
+  driverManagementForm: document.getElementById('driver-management-form'),
+  driverFirstNameInput: document.getElementById('driver-first-name'),
+  driverLastNameInput: document.getElementById('driver-last-name'),
+  driverEmailInput: document.getElementById('driver-email'),
+  driverListContainer: document.getElementById('driver-management-list'),
+  adminPlanningTab: document.getElementById('admin-planning-tab'),
+  adminArchivesTab: document.getElementById('admin-archives-tab'),
+  adminPlanningView: document.getElementById('admin-planning-view'),
+  adminArchiveView: document.getElementById('admin-archive-view'),
+  archiveDriverFilter: document.getElementById('archive-driver-filter'),
+  archiveMerchandiseFilter: document.getElementById('archive-merchandise-filter'),
+  archivePeriodFilter: document.getElementById('archive-period-filter'),
+  archiveFromInput: document.getElementById('archive-from'),
+  archiveToInput: document.getElementById('archive-to'),
+  archiveApplyBtn: document.getElementById('archive-apply'),
+  archiveResetBtn: document.getElementById('archive-reset'),
+  archiveList: document.getElementById('archive-list'),
+  noArchive: document.getElementById('no-archive'),
 };
 
 function showElement(element) {
@@ -132,6 +176,19 @@ function normalizeDriver(driver) {
   };
 }
 
+function normalizeAdmin(admin) {
+  const firstName = admin.first_name || admin.firstName;
+  const lastName = admin.last_name || admin.lastName;
+  return {
+    id: admin.id,
+    firstName,
+    lastName,
+    identifier: admin.identifier,
+    initials: admin.initials || computeInitials(firstName, lastName),
+    createdAt: admin.created_at || admin.createdAt || null,
+  };
+}
+
 function mapCourse(course) {
   const date = new Date(course.dateTime || course.date_time || course.date);
   const normalized = {
@@ -148,6 +205,8 @@ function mapCourse(course) {
     completionComments: course.completionComments || course.completion_comments || '',
     createdAt: course.createdAt || course.created_at || null,
     updatedAt: course.updatedAt || course.updated_at || null,
+    archivedAt: course.archivedAt || course.archived_at || null,
+    isArchived: Boolean(course.archivedAt || course.archived_at),
   };
 
   state.courseCache.set(normalized.id, normalized);
@@ -178,13 +237,34 @@ function formatDate(date) {
   return date.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
+function computeInitials(firstName, lastName) {
+  const first = firstName ? firstName.trim().charAt(0) : '';
+  const last = lastName ? lastName.trim().charAt(0) : '';
+  const initials = `${first}${last}`.toUpperCase();
+  return initials || 'LS';
+}
+
+function computeAdminIdentifier(firstName, lastName) {
+  if (!firstName || !lastName) {
+    return '';
+  }
+  const trimmedFirst = firstName.trim();
+  const trimmedLast = lastName.trim().replace(/\s+/g, '');
+  if (!trimmedFirst || !trimmedLast) {
+    return '';
+  }
+  return `${trimmedFirst.charAt(0)}${trimmedLast}`.toLowerCase();
+}
+
 function getUserInitials() {
+  if (state.currentUser?.initials) {
+    return state.currentUser.initials;
+  }
   if (!state.currentUser) {
     return 'LS';
   }
-  const first = state.currentUser.firstName ? state.currentUser.firstName.charAt(0) : '';
-  const last = state.currentUser.lastName ? state.currentUser.lastName.charAt(0) : '';
-  return `${first}${last}`.toUpperCase() || 'LS';
+  const initials = computeInitials(state.currentUser.firstName, state.currentUser.lastName);
+  return initials || 'LS';
 }
 
 async function searchDrivers() {
@@ -230,7 +310,11 @@ function renderDriverList(drivers) {
 }
 
 async function loginAsDriver(driver) {
-  state.currentUser = driver;
+  state.currentUser = {
+    ...driver,
+    role: 'driver',
+    initials: computeInitials(driver.firstName, driver.lastName),
+  };
   state.isAdmin = false;
   elements.driverNameDisplay.textContent = `${driver.firstName} ${driver.lastName}`;
   hideElement(elements.loginPage);
@@ -240,16 +324,169 @@ async function loginAsDriver(driver) {
   await loadDriverCourses();
 }
 
-async function loginAsAdmin() {
-  state.currentUser = { firstName: 'Admin', lastName: 'Agri Holann' };
+function setAdminSession(admin) {
+  const normalized = normalizeAdmin(admin);
+  state.currentUser = {
+    ...normalized,
+    role: 'admin',
+  };
   state.isAdmin = true;
+  state.adminFilters = { driverId: 'all', range: 'week' };
+  state.archiveFilters = { driverId: 'all', merchandise: 'all', period: 'week', from: null, to: null };
+  updateArchivePeriodInputs();
+
   hideElement(elements.loginPage);
   hideElement(elements.driverDashboard);
   showElement(elements.adminDashboard);
+  closeAdminLoginModal();
+
+  if (elements.adminIdentifierDisplay) {
+    elements.adminIdentifierDisplay.textContent = `${state.currentUser.initials} (${state.currentUser.identifier})`;
+  }
+
+  state.adminView = 'planning';
+  switchAdminView('planning');
+  updateAdminRangeButtons();
   switchTab('week');
-  await loadAdminDrivers();
-  await loadAdminCourses();
-  await loadActivityLog();
+
+  loadAdminDrivers();
+  loadAdminCourses();
+  loadActivityLog();
+  loadArchivedCourses();
+}
+
+function openAdminLoginModal() {
+  if (!elements.adminLoginModal) {
+    return;
+  }
+  elements.adminIdentifierInput.value = '';
+  elements.adminCreateForm?.reset();
+  updateAdminIdentifierPreview();
+  loadAdmins();
+  showElement(elements.adminLoginModal);
+}
+
+function closeAdminLoginModal() {
+  if (elements.adminLoginModal) {
+    hideElement(elements.adminLoginModal);
+  }
+}
+
+async function handleAdminLogin(event) {
+  event.preventDefault();
+  const identifier = elements.adminIdentifierInput.value.trim().toLowerCase();
+
+  if (!identifier) {
+    alert("Veuillez renseigner l'identifiant administrateur (initiale + nom).");
+    return;
+  }
+
+  try {
+    const admin = await apiFetch('/admins/login', {
+      method: 'POST',
+      body: JSON.stringify({ identifier }),
+    });
+    setAdminSession(admin);
+  } catch (error) {
+    console.error('Erreur de connexion administrateur', error);
+    alert(error.message);
+  }
+}
+
+async function handleAdminCreate(event) {
+  event.preventDefault();
+
+  const firstName = elements.adminCreateFirstName.value.trim();
+  const lastName = elements.adminCreateLastName.value.trim();
+
+  if (!firstName || !lastName) {
+    alert('Veuillez renseigner un prénom et un nom.');
+    return;
+  }
+
+  try {
+    const admin = await apiFetch('/admins', {
+      method: 'POST',
+      body: JSON.stringify({ firstName, lastName }),
+    });
+
+    await loadAdmins();
+    alert(`Compte administrateur créé. Identifiant : ${admin.identifier}`);
+    setAdminSession(admin);
+  } catch (error) {
+    console.error('Erreur lors de la création du compte administrateur', error);
+    alert(error.message);
+  }
+}
+
+async function loadAdmins() {
+  try {
+    const admins = await apiFetch('/admins');
+    state.admins = admins.map(normalizeAdmin);
+    renderAdminAccounts();
+  } catch (error) {
+    console.error('Erreur lors du chargement des comptes administrateurs', error);
+  }
+}
+
+function renderAdminAccounts() {
+  if (!elements.adminAccountsList) {
+    return;
+  }
+
+  elements.adminAccountsList.innerHTML = '';
+
+  if (!state.admins.length) {
+    const empty = document.createElement('p');
+    empty.className = 'text-sm text-gray-500';
+    empty.textContent = 'Aucun compte administrateur enregistré pour le moment.';
+    elements.adminAccountsList.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement('ul');
+  list.className = 'space-y-2';
+
+  state.admins.forEach((admin) => {
+    const item = document.createElement('li');
+    item.className =
+      'flex items-center justify-between bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm';
+    item.innerHTML = `
+      <div>
+        <div class="font-medium text-gray-800">${admin.firstName} ${admin.lastName}</div>
+        <div class="text-xs text-gray-500">Identifiant : <span class="font-mono">${admin.identifier}</span></div>
+      </div>
+      <button type="button" class="text-blue-600 hover:text-blue-800 text-xs font-medium">Utiliser</button>
+    `;
+
+    const useButton = item.querySelector('button');
+    useButton.addEventListener('click', () => {
+      elements.adminIdentifierInput.value = admin.identifier;
+      elements.adminIdentifierInput.focus();
+    });
+
+    list.appendChild(item);
+  });
+
+  elements.adminAccountsList.appendChild(list);
+}
+
+function updateAdminIdentifierPreview() {
+  if (!elements.adminIdentifierPreview) {
+    return;
+  }
+
+  const firstName = elements.adminCreateFirstName.value;
+  const lastName = elements.adminCreateLastName.value;
+  const identifier = computeAdminIdentifier(firstName, lastName);
+
+  if (identifier) {
+    elements.adminIdentifierPreviewValue.textContent = identifier;
+    showElement(elements.adminIdentifierPreview);
+  } else {
+    elements.adminIdentifierPreviewValue.textContent = '';
+    hideElement(elements.adminIdentifierPreview);
+  }
 }
 
 function logout() {
@@ -257,6 +494,9 @@ function logout() {
   state.isAdmin = false;
   state.driverCourses = [];
   state.adminCourses = [];
+  state.archivedCourses = [];
+  state.adminFilters = { driverId: 'all', range: 'week' };
+  state.archiveFilters = { driverId: 'all', merchandise: 'all', period: 'week', from: null, to: null };
   state.activityLog = [];
   state.courseCache.clear();
   elements.lastnameInput.value = '';
@@ -266,6 +506,24 @@ function logout() {
   hideElement(elements.courseModal);
   closePhotoModal();
   closeCourseEditor();
+  closeAdminLoginModal();
+  if (elements.adminIdentifierDisplay) {
+    elements.adminIdentifierDisplay.textContent = '';
+  }
+  if (elements.adminDriverSelect) {
+    elements.adminDriverSelect.value = 'all';
+  }
+  if (elements.archiveDriverFilter) {
+    elements.archiveDriverFilter.value = 'all';
+  }
+  if (elements.archiveMerchandiseFilter) {
+    elements.archiveMerchandiseFilter.value = 'all';
+  }
+  if (elements.archivePeriodFilter) {
+    elements.archivePeriodFilter.value = 'week';
+  }
+  updateAdminRangeButtons();
+  updateArchivePeriodInputs();
   showElement(elements.loginPage);
   switchTab('today');
 }
@@ -299,6 +557,48 @@ function switchTab(tab) {
   }
 }
 
+function switchAdminView(view) {
+  state.adminView = view;
+
+  if (!elements.adminPlanningView || !elements.adminArchiveView) {
+    return;
+  }
+
+  const planningActive = view === 'planning';
+
+  if (planningActive) {
+    showElement(elements.adminPlanningView);
+    hideElement(elements.adminArchiveView);
+    elements.adminPlanningTab?.classList.add('admin-tab--active');
+    elements.adminArchivesTab?.classList.remove('admin-tab--active');
+  } else {
+    hideElement(elements.adminPlanningView);
+    showElement(elements.adminArchiveView);
+    elements.adminArchivesTab?.classList.add('admin-tab--active');
+    elements.adminPlanningTab?.classList.remove('admin-tab--active');
+    updateArchivePeriodInputs();
+    if (!state.archivedCourses.length) {
+      loadArchivedCourses();
+    } else {
+      renderArchivedCourses();
+    }
+  }
+}
+
+function updateAdminRangeButtons() {
+  if (!elements.adminRangeButtons) {
+    return;
+  }
+  elements.adminRangeButtons.forEach((button) => {
+    const range = button.getAttribute('data-admin-range');
+    if (range === state.adminFilters.range) {
+      button.classList.add('filter-chip--active');
+    } else {
+      button.classList.remove('filter-chip--active');
+    }
+  });
+}
+
 async function loadDriverCourses() {
   if (!state.currentUser) {
     return;
@@ -326,14 +626,20 @@ async function loadAdminDrivers() {
   try {
     const drivers = await apiFetch('/drivers');
     state.drivers = drivers.map(normalizeDriver);
+    const selectedDriverFilter = state.adminFilters.driverId || 'all';
+
     elements.adminDriverSelect.innerHTML = '<option value="all">Tous les chauffeurs</option>';
     elements.adminDriverPicker.innerHTML = '<option value="">Sélectionnez un chauffeur</option>';
     elements.courseEditorDriver.innerHTML = '<option value="">Sélectionnez un chauffeur</option>';
+    if (elements.archiveDriverFilter) {
+      elements.archiveDriverFilter.innerHTML = '<option value="all">Tous les chauffeurs</option>';
+    }
 
     state.drivers.forEach((driver) => {
+      const label = `${driver.firstName} ${driver.lastName}`;
       const option = document.createElement('option');
       option.value = driver.id;
-      option.textContent = `${driver.firstName} ${driver.lastName}`;
+      option.textContent = label;
       elements.adminDriverSelect.appendChild(option);
 
       const pickerOption = option.cloneNode(true);
@@ -341,20 +647,170 @@ async function loadAdminDrivers() {
 
       const editorOption = option.cloneNode(true);
       elements.courseEditorDriver.appendChild(editorOption);
+
+      if (elements.archiveDriverFilter) {
+        const archiveOption = option.cloneNode(true);
+        elements.archiveDriverFilter.appendChild(archiveOption);
+      }
     });
+
+    elements.adminDriverSelect.value = selectedDriverFilter;
+    if (elements.archiveDriverFilter) {
+      elements.archiveDriverFilter.value = state.archiveFilters.driverId || 'all';
+    }
+
+    renderDriverManagement();
   } catch (error) {
     console.error('Erreur lors du chargement des chauffeurs', error);
   }
 }
 
-async function loadAdminCourses() {
-  const today = startOfDay(new Date());
-  const nextWeek = addDays(today, 7);
-  const params = new URLSearchParams({ from: today.toISOString(), to: nextWeek.toISOString() });
+function renderDriverManagement() {
+  if (!elements.driverListContainer) {
+    return;
+  }
 
-  const selectedDriver = elements.adminDriverSelect.value;
-  if (selectedDriver && selectedDriver !== 'all') {
-    params.append('driverId', selectedDriver);
+  elements.driverListContainer.innerHTML = '';
+
+  if (!state.drivers.length) {
+    const empty = document.createElement('p');
+    empty.className = 'text-sm text-gray-500';
+    empty.textContent = 'Aucun chauffeur enregistré.';
+    elements.driverListContainer.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement('ul');
+  list.className = 'divide-y divide-gray-200';
+
+  state.drivers.forEach((driver) => {
+    const item = document.createElement('li');
+    item.className = 'flex items-center justify-between py-2';
+    item.innerHTML = `
+      <div>
+        <div class="text-sm font-medium text-gray-800">${driver.firstName} ${driver.lastName}</div>
+        ${driver.email ? `<div class="text-xs text-gray-500">${driver.email}</div>` : ''}
+      </div>
+      <button type="button" class="text-red-600 hover:text-red-800 text-sm font-medium">Supprimer</button>
+    `;
+
+    const deleteButton = item.querySelector('button');
+    deleteButton.addEventListener('click', () => handleDeleteDriver(driver.id));
+    list.appendChild(item);
+  });
+
+  elements.driverListContainer.appendChild(list);
+}
+
+async function handleAddDriver(event) {
+  event.preventDefault();
+
+  const firstName = elements.driverFirstNameInput.value.trim();
+  const lastName = elements.driverLastNameInput.value.trim();
+  const email = elements.driverEmailInput.value.trim();
+
+  if (!firstName || !lastName) {
+    alert('Veuillez renseigner un prénom et un nom.');
+    return;
+  }
+
+  try {
+    await apiFetch('/drivers', {
+      method: 'POST',
+      body: JSON.stringify({ firstName, lastName, email: email || null }),
+    });
+
+    elements.driverManagementForm.reset();
+    await loadAdminDrivers();
+    await loadAdminCourses();
+  } catch (error) {
+    console.error('Erreur lors de l\'ajout du chauffeur', error);
+    alert(error.message);
+  }
+}
+
+async function handleDeleteDriver(driverId) {
+  if (!confirm('Supprimer ce chauffeur supprimera également ses courses associées. Continuer ?')) {
+    return;
+  }
+
+  try {
+    await apiFetch(`/drivers/${driverId}`, { method: 'DELETE' });
+    await loadAdminDrivers();
+    await loadAdminCourses();
+    await loadArchivedCourses();
+    await loadActivityLog();
+  } catch (error) {
+    console.error('Erreur lors de la suppression du chauffeur', error);
+    alert(error.message);
+  }
+}
+
+async function archiveCourse(courseId) {
+  if (!confirm('Êtes-vous sûr de vouloir archiver cette course ?')) {
+    return;
+  }
+  try {
+    await apiFetch(`/courses/${courseId}/archive`, {
+      method: 'POST',
+      body: JSON.stringify({ user: getUserInitials() }),
+    });
+    await loadAdminCourses();
+    await loadArchivedCourses();
+    await loadActivityLog();
+  } catch (error) {
+    console.error("Erreur lors de l'archivage de la course", error);
+    alert(error.message);
+  }
+}
+
+async function unarchiveCourse(courseId) {
+  if (!confirm('Restaurer cette course archivée ?')) {
+    return;
+  }
+  try {
+    await apiFetch(`/courses/${courseId}/unarchive`, {
+      method: 'POST',
+      body: JSON.stringify({ user: getUserInitials() }),
+    });
+    await loadAdminCourses();
+    await loadArchivedCourses();
+    await loadActivityLog();
+  } catch (error) {
+    console.error('Erreur lors de la restauration de la course', error);
+    alert(error.message);
+  }
+}
+
+async function loadAdminCourses() {
+  const params = new URLSearchParams();
+  const today = startOfDay(new Date());
+  let from = null;
+  let to = null;
+
+  switch (state.adminFilters.range) {
+    case 'day':
+      from = today;
+      to = addDays(today, 1);
+      break;
+    case 'week':
+      from = today;
+      to = addDays(today, 7);
+      break;
+    case 'all':
+    default:
+      break;
+  }
+
+  if (from) {
+    params.append('from', from.toISOString());
+  }
+  if (to) {
+    params.append('to', to.toISOString());
+  }
+
+  if (state.adminFilters.driverId && state.adminFilters.driverId !== 'all') {
+    params.append('driverId', state.adminFilters.driverId);
   }
 
   try {
@@ -374,6 +830,197 @@ async function loadActivityLog() {
   } catch (error) {
     console.error("Erreur lors du chargement du journal d'activité", error);
   }
+}
+
+function resolveArchiveRange() {
+  const today = startOfDay(new Date());
+  let from = null;
+  let to = null;
+
+  switch (state.archiveFilters.period) {
+    case 'day':
+      from = today;
+      to = addDays(today, 1);
+      break;
+    case 'week':
+      from = today;
+      to = addDays(today, 7);
+      break;
+    case 'month': {
+      from = today;
+      const end = new Date(today);
+      end.setMonth(end.getMonth() + 1);
+      to = end;
+      break;
+    }
+    case 'custom': {
+      if (state.archiveFilters.from) {
+        from = startOfDay(new Date(state.archiveFilters.from));
+      }
+      if (state.archiveFilters.to) {
+        const end = startOfDay(new Date(state.archiveFilters.to));
+        to = addDays(end, 1);
+      }
+      break;
+    }
+    case 'all':
+    default:
+      break;
+  }
+
+  return { from, to };
+}
+
+async function loadArchivedCourses() {
+  if (!state.isAdmin) {
+    return;
+  }
+
+  const params = new URLSearchParams({ archived: 'true' });
+  if (state.archiveFilters.driverId && state.archiveFilters.driverId !== 'all') {
+    params.append('driverId', state.archiveFilters.driverId);
+  }
+
+  const { from, to } = resolveArchiveRange();
+  if (from) {
+    params.append('from', from.toISOString());
+  }
+  if (to) {
+    params.append('to', to.toISOString());
+  }
+
+  try {
+    const courses = await apiFetch(`/courses?${params.toString()}`);
+    let mapped = courses.map(mapCourse).filter((course) => course.archivedAt);
+
+    if (state.archiveFilters.merchandise && state.archiveFilters.merchandise !== 'all') {
+      const target = state.archiveFilters.merchandise.toLowerCase();
+      mapped = mapped.filter((course) => (course.merchandise || '').toLowerCase() === target);
+    }
+
+    state.archivedCourses = mapped;
+    renderArchivedCourses();
+  } catch (error) {
+    console.error("Erreur lors du chargement des courses archivées", error);
+  }
+}
+
+function renderArchivedCourses() {
+  if (!elements.archiveList || !elements.noArchive) {
+    return;
+  }
+
+  elements.archiveList.innerHTML = '';
+
+  if (!state.archivedCourses.length) {
+    showElement(elements.noArchive);
+    return;
+  }
+
+  hideElement(elements.noArchive);
+
+  state.archivedCourses
+    .slice()
+    .sort((a, b) => b.date.getTime() - a.date.getTime())
+    .forEach((course) => {
+      const row = document.createElement('tr');
+      row.className = 'hover:bg-gray-50';
+      row.innerHTML = `
+        <td class="px-4 py-3 whitespace-nowrap">${course.date.toLocaleDateString('fr-FR')}</td>
+        <td class="px-4 py-3 whitespace-nowrap">${course.driverName || ''}</td>
+        <td class="px-4 py-3">
+          <div class="font-medium text-gray-800">${course.departure} → ${course.destination}</div>
+          <div class="text-xs text-gray-500 mt-1">${formatTime(course.date)}</div>
+        </td>
+        <td class="px-4 py-3 whitespace-nowrap">${course.merchandise || '—'}</td>
+        <td class="px-4 py-3 text-sm text-gray-500">${course.comments || ''}</td>
+        <td class="px-4 py-3 whitespace-nowrap">
+          <div class="flex flex-wrap gap-2">
+            <button type="button" class="btn-tertiary text-xs" data-action="restore">Restaurer</button>
+            <button type="button" class="btn-danger text-xs" data-action="delete">Supprimer</button>
+          </div>
+        </td>
+      `;
+
+      const restoreBtn = row.querySelector('[data-action="restore"]');
+      const deleteBtn = row.querySelector('[data-action="delete"]');
+
+      restoreBtn.addEventListener('click', () => unarchiveCourse(course.id));
+      deleteBtn.addEventListener('click', () => deleteCourse(course.id));
+
+      elements.archiveList.appendChild(row);
+    });
+}
+
+function updateArchivePeriodInputs() {
+  if (!elements.archiveFromInput || !elements.archiveToInput) {
+    return;
+  }
+
+  const isCustom = state.archiveFilters.period === 'custom';
+  elements.archiveFromInput.disabled = !isCustom;
+  elements.archiveToInput.disabled = !isCustom;
+
+  if (!isCustom) {
+    elements.archiveFromInput.value = '';
+    elements.archiveToInput.value = '';
+    state.archiveFilters.from = null;
+    state.archiveFilters.to = null;
+  }
+}
+
+function handleArchivePeriodChange() {
+  if (!elements.archivePeriodFilter) {
+    return;
+  }
+  state.archiveFilters.period = elements.archivePeriodFilter.value || 'week';
+  updateArchivePeriodInputs();
+  loadArchivedCourses();
+}
+
+function handleArchiveFiltersChange() {
+  if (elements.archiveDriverFilter) {
+    state.archiveFilters.driverId = elements.archiveDriverFilter.value || 'all';
+  }
+  if (elements.archiveMerchandiseFilter) {
+    state.archiveFilters.merchandise = elements.archiveMerchandiseFilter.value || 'all';
+  }
+  loadArchivedCourses();
+}
+
+function handleArchiveDatesChange() {
+  if (!elements.archiveFromInput || !elements.archiveToInput) {
+    return;
+  }
+  state.archiveFilters.from = elements.archiveFromInput.value || null;
+  state.archiveFilters.to = elements.archiveToInput.value || null;
+}
+
+function applyArchiveFilters() {
+  handleArchiveDatesChange();
+  loadArchivedCourses();
+}
+
+function resetArchiveFilters() {
+  state.archiveFilters = {
+    driverId: 'all',
+    merchandise: 'all',
+    period: 'week',
+    from: null,
+    to: null,
+  };
+
+  if (elements.archiveDriverFilter) {
+    elements.archiveDriverFilter.value = 'all';
+  }
+  if (elements.archiveMerchandiseFilter) {
+    elements.archiveMerchandiseFilter.value = 'all';
+  }
+  if (elements.archivePeriodFilter) {
+    elements.archivePeriodFilter.value = 'week';
+  }
+  updateArchivePeriodInputs();
+  applyArchiveFilters();
 }
 
 function renderTodayCourses() {
@@ -481,6 +1128,9 @@ function renderAdminCourses() {
           </span>
         </td>
         <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+          <button class="text-amber-600 hover:text-amber-800 mr-2" data-action="archive" aria-label="Archiver la course">
+            <i class="fas fa-box-archive"></i>
+          </button>
           <button class="text-blue-600 hover:text-blue-900 mr-2" data-action="edit" aria-label="Modifier la course">
             <i class="fas fa-edit"></i>
           </button>
@@ -495,6 +1145,9 @@ function renderAdminCourses() {
         if (target && target.dataset.action === 'edit') {
           event.stopPropagation();
           editCourse(course.id);
+        } else if (target && target.dataset.action === 'archive') {
+          event.stopPropagation();
+          archiveCourse(course.id);
         } else if (target && target.dataset.action === 'delete') {
           event.stopPropagation();
           deleteCourse(course.id);
@@ -538,6 +1191,10 @@ function renderActivityLog() {
         ? 'a complété une course'
         : item.action === 'deleted'
         ? 'a supprimé une course'
+        : item.action === 'archived'
+        ? 'a archivé une course'
+        : item.action === 'restored'
+        ? 'a restauré une course'
         : item.action;
 
     const courseInfo = item.course
@@ -558,6 +1215,38 @@ function renderActivityLog() {
         </div>
       </div>
     `;
+
+    const content = logItem.querySelector('.flex-1');
+
+    if (state.isAdmin && item.course) {
+      const actions = document.createElement('div');
+      actions.className = 'flex flex-wrap gap-2 mt-3';
+
+      if (item.course.archivedAt) {
+        const restoreBtn = document.createElement('button');
+        restoreBtn.type = 'button';
+        restoreBtn.className = 'btn-tertiary text-xs';
+        restoreBtn.textContent = 'Restaurer';
+        restoreBtn.addEventListener('click', () => unarchiveCourse(item.course.id));
+        actions.appendChild(restoreBtn);
+      } else {
+        const archiveBtn = document.createElement('button');
+        archiveBtn.type = 'button';
+        archiveBtn.className = 'btn-secondary text-xs';
+        archiveBtn.textContent = 'Archiver';
+        archiveBtn.addEventListener('click', () => archiveCourse(item.course.id));
+        actions.appendChild(archiveBtn);
+      }
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'btn-danger text-xs';
+      deleteBtn.textContent = 'Supprimer';
+      deleteBtn.addEventListener('click', () => deleteCourse(item.course.id));
+      actions.appendChild(deleteBtn);
+
+      content.appendChild(actions);
+    }
 
     elements.activityLogList.appendChild(logItem);
   });
@@ -660,6 +1349,7 @@ async function deleteCourse(courseId) {
 
     if (state.isAdmin) {
       await loadAdminCourses();
+      await loadArchivedCourses();
       await loadActivityLog();
     } else {
       await loadDriverCourses();
@@ -952,7 +1642,7 @@ async function confirmPhoto() {
 
 function registerEventListeners() {
   elements.lastnameInput.addEventListener('input', searchDrivers);
-  elements.adminLoginBtn.addEventListener('click', loginAsAdmin);
+  elements.adminLoginBtn.addEventListener('click', openAdminLoginModal);
   elements.logoutBtn.addEventListener('click', logout);
   elements.adminLogoutBtn.addEventListener('click', logout);
   elements.todayTab.addEventListener('click', () => switchTab('today'));
@@ -979,13 +1669,47 @@ function registerEventListeners() {
   elements.captureBtn.addEventListener('click', capturePhoto);
   elements.confirmPhotoBtn.addEventListener('click', confirmPhoto);
   elements.retakePhotoBtn.addEventListener('click', retakePhoto);
-  elements.adminDriverSelect.addEventListener('change', loadAdminCourses);
+  elements.adminDriverSelect.addEventListener('change', () => {
+    state.adminFilters.driverId = elements.adminDriverSelect.value || 'all';
+    if (state.isAdmin) {
+      loadAdminCourses();
+    }
+  });
   elements.newCourseAdminBtn.addEventListener('click', () => {
     openCourseEditor();
   });
   elements.courseEditorForm.addEventListener('submit', handleCourseEditorSubmit);
   elements.cancelCourseEditorBtn.addEventListener('click', closeCourseEditor);
   elements.closeCourseEditorBtn.addEventListener('click', closeCourseEditor);
+
+  if (elements.adminRangeButtons) {
+    elements.adminRangeButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const range = button.getAttribute('data-admin-range');
+        state.adminFilters.range = range || 'week';
+        updateAdminRangeButtons();
+        loadAdminCourses();
+      });
+    });
+  }
+
+  elements.adminPlanningTab?.addEventListener('click', () => switchAdminView('planning'));
+  elements.adminArchivesTab?.addEventListener('click', () => switchAdminView('archives'));
+
+  elements.closeAdminLoginModalBtn?.addEventListener('click', closeAdminLoginModal);
+  elements.adminLoginForm?.addEventListener('submit', handleAdminLogin);
+  elements.adminCreateForm?.addEventListener('submit', handleAdminCreate);
+  elements.driverManagementForm?.addEventListener('submit', handleAddDriver);
+  elements.adminCreateFirstName?.addEventListener('input', updateAdminIdentifierPreview);
+  elements.adminCreateLastName?.addEventListener('input', updateAdminIdentifierPreview);
+
+  elements.archivePeriodFilter?.addEventListener('change', handleArchivePeriodChange);
+  elements.archiveDriverFilter?.addEventListener('change', handleArchiveFiltersChange);
+  elements.archiveMerchandiseFilter?.addEventListener('change', handleArchiveFiltersChange);
+  elements.archiveFromInput?.addEventListener('change', handleArchiveDatesChange);
+  elements.archiveToInput?.addEventListener('change', handleArchiveDatesChange);
+  elements.archiveApplyBtn?.addEventListener('click', applyArchiveFilters);
+  elements.archiveResetBtn?.addEventListener('click', resetArchiveFilters);
 
   window.addEventListener('click', (event) => {
     if (event.target === elements.courseModal) {
@@ -997,11 +1721,16 @@ function registerEventListeners() {
     if (event.target === elements.courseEditorModal) {
       closeCourseEditor();
     }
+    if (event.target === elements.adminLoginModal) {
+      closeAdminLoginModal();
+    }
   });
 }
 
 function init() {
   setDefaultCourseDateTime();
+  updateAdminRangeButtons();
+  updateArchivePeriodInputs();
   registerEventListeners();
 }
 

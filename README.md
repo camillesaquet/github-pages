@@ -6,6 +6,9 @@ Application web permettant à l'entreprise Agri Holann de planifier les tournée
 
 - **Authentification simplifiée** : recherche et connexion d'un chauffeur par son nom de famille, accès dédié à l'administration.
 - **Tableaux de bord** : vue chauffeur (courses du jour et de la semaine) et vue administrateur (planning global, filtres par chauffeur, journal des activités).
+- **Comptes administrateurs** : création et connexion d'un compte dont l'identifiant est construit à partir de l'initiale du prénom et du nom de famille, suivi des actions avec ces initiales.
+- **Gestion du parc de chauffeurs** : ajout/suppression de chauffeurs depuis l'administration, sélection rapide dans les formulaires de création de course.
+- **Archivage avancé** : onglet dédié pour consulter les courses archivées avec filtres par chauffeur, période et type de marchandise, archivage/désarchivage directement depuis le journal d'activité.
 - **Gestion complète des courses** : création, édition, suppression et validation avec prise de photo du bon de transport.
 - **Notifications par e-mail** : envoi automatique (transport simulé) d'un récapitulatif au siège lors de la validation d'une course.
 - **Persistance des données** : stockage des chauffeurs, courses, journaux d'activité et e-mails simulés dans une base SQLite embarquée.
@@ -35,6 +38,12 @@ Le serveur écoute par défaut sur [http://localhost:3000](http://localhost:3000
 
 La base SQLite est initialisée automatiquement au démarrage dans le dossier `db/agriholann.db` avec des données de démonstration (chauffeurs et courses). Les photos prises lors des validations ainsi que les pièces jointes des e-mails simulés sont stockées dans `storage/attachments`.
 
+### Accès administrateur
+
+- Lors de la connexion, cliquez sur « Connexion administration » puis saisissez votre identifiant : initiale du prénom suivie du nom en minuscules (ex. `lsaquet`).
+- Il est possible de créer un nouveau compte directement depuis cette fenêtre en renseignant un prénom et un nom. L'application génère automatiquement l'identifiant associé.
+- Toutes les actions menées depuis l'administration (création, édition, archivage, suppression) sont historisées dans le journal avec les initiales de l'administrateur connecté.
+
 ## Scripts complémentaires
 
 | Commande | Description |
@@ -48,12 +57,19 @@ La base SQLite est initialisée automatiquement au démarrage dans le dossier `d
 | Méthode | Chemin | Description |
 | --- | --- | --- |
 | `GET /api/drivers` | Liste les chauffeurs (filtrage via `?search=`). |
-| `GET /api/courses` | Liste les courses avec filtres `driverId`, `from`, `to`. |
+| `POST /api/drivers` | Ajoute un chauffeur. |
+| `DELETE /api/drivers/:id` | Supprime un chauffeur et ses courses associées. |
+| `GET /api/admins` | Liste les comptes administrateurs existants. |
+| `POST /api/admins` | Crée un compte administrateur à partir d'un prénom et d'un nom. |
+| `POST /api/admins/login` | Connecte un administrateur via son identifiant généré. |
+| `GET /api/courses` | Liste les courses avec filtres `driverId`, `from`, `to`, `archived`. |
 | `GET /api/courses/:id` | Récupère le détail d'une course. |
 | `POST /api/courses` | Crée une nouvelle course. |
 | `PUT /api/courses/:id` | Met à jour une course existante. |
 | `DELETE /api/courses/:id` | Supprime une course. |
 | `POST /api/courses/:id/complete` | Valide une course, sauvegarde la photo et journalise l'activité. |
+| `POST /api/courses/:id/archive` | Archive une course active. |
+| `POST /api/courses/:id/unarchive` | Restaure une course archivée. |
 | `GET /api/activity` | Retourne le journal des actions sur les courses. |
 | `GET /api/emails` | Liste les e-mails simulés envoyés lors des validations. |
 
