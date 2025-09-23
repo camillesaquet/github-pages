@@ -97,10 +97,12 @@ const elements = {
   closeAdminLoginModalBtn: document.getElementById('close-admin-login'),
   adminLoginForm: document.getElementById('admin-login-form'),
   adminIdentifierInput: document.getElementById('admin-identifier-input'),
+  adminPasswordInput: document.getElementById('admin-password-input'),
   adminAccountsList: document.getElementById('admin-accounts'),
   adminCreateForm: document.getElementById('admin-create-form'),
   adminCreateFirstName: document.getElementById('admin-create-first-name'),
   adminCreateLastName: document.getElementById('admin-create-last-name'),
+  adminCreatePassword: document.getElementById('admin-create-password'),
   adminIdentifierPreview: document.getElementById('admin-identifier-preview'),
   adminIdentifierPreviewValue: document.getElementById('admin-identifier-preview-value'),
   driverManagementForm: document.getElementById('driver-management-form'),
@@ -360,7 +362,13 @@ function openAdminLoginModal() {
     return;
   }
   elements.adminIdentifierInput.value = '';
+  if (elements.adminPasswordInput) {
+    elements.adminPasswordInput.value = '';
+  }
   elements.adminCreateForm?.reset();
+  if (elements.adminCreatePassword) {
+    elements.adminCreatePassword.value = '';
+  }
   updateAdminIdentifierPreview();
   loadAdmins();
   showElement(elements.adminLoginModal);
@@ -375,16 +383,22 @@ function closeAdminLoginModal() {
 async function handleAdminLogin(event) {
   event.preventDefault();
   const identifier = elements.adminIdentifierInput.value.trim().toLowerCase();
+  const password = elements.adminPasswordInput?.value || '';
 
   if (!identifier) {
     alert("Veuillez renseigner l'identifiant administrateur (initiale + nom).");
     return;
   }
 
+  if (!password) {
+    alert('Veuillez renseigner votre mot de passe administrateur.');
+    return;
+  }
+
   try {
     const admin = await apiFetch('/admins/login', {
       method: 'POST',
-      body: JSON.stringify({ identifier }),
+      body: JSON.stringify({ identifier, password }),
     });
     setAdminSession(admin);
   } catch (error) {
@@ -398,16 +412,22 @@ async function handleAdminCreate(event) {
 
   const firstName = elements.adminCreateFirstName.value.trim();
   const lastName = elements.adminCreateLastName.value.trim();
+  const password = elements.adminCreatePassword?.value || '';
 
   if (!firstName || !lastName) {
     alert('Veuillez renseigner un prénom et un nom.');
     return;
   }
 
+  if (!password) {
+    alert('Veuillez définir un mot de passe pour ce compte administrateur.');
+    return;
+  }
+
   try {
     const admin = await apiFetch('/admins', {
       method: 'POST',
-      body: JSON.stringify({ firstName, lastName }),
+      body: JSON.stringify({ firstName, lastName, password }),
     });
 
     await loadAdmins();
@@ -509,6 +529,9 @@ function logout() {
   closeAdminLoginModal();
   if (elements.adminIdentifierDisplay) {
     elements.adminIdentifierDisplay.textContent = '';
+  }
+  if (elements.adminPasswordInput) {
+    elements.adminPasswordInput.value = '';
   }
   if (elements.adminDriverSelect) {
     elements.adminDriverSelect.value = 'all';

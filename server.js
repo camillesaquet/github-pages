@@ -5,11 +5,25 @@ const cors = require('cors');
 const nodemailer = require('nodemailer');
 const sqlite3 = require('sqlite3').verbose();
 const { open } = require('sqlite');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DB_PATH = path.join(__dirname, 'db', 'agriholann.db');
 const ATTACHMENTS_DIR = path.join(__dirname, 'storage', 'attachments');
+const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || 'admin';
+
+async function hashPassword(password) {
+  const value = password || '';
+  return bcrypt.hash(value, 10);
+}
+
+async function comparePassword(password, hash) {
+  if (!hash) {
+    return false;
+  }
+  return bcrypt.compare(password || '', hash);
+}
 
 async function ensureDirectoryExists(dirPath) {
   if (!fs.existsSync(dirPath)) {
@@ -76,11 +90,12 @@ async function ensureDefaultAdmin() {
   const identifier = await generateUniqueAdminIdentifier(firstName, lastName);
   const initials = buildAdminInitials(firstName, lastName);
   const createdAt = new Date().toISOString();
+  const passwordHash = await hashPassword(DEFAULT_ADMIN_PASSWORD);
 
   await db.run(
-    `INSERT INTO admins (first_name, last_name, identifier, initials, created_at)
-     VALUES (?, ?, ?, ?, ?)`,
-    [firstName, lastName, identifier, initials, createdAt]
+    `INSERT INTO admins (first_name, last_name, identifier, initials, created_at, password_hash)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [firstName, lastName, identifier, initials, createdAt, passwordHash]
   );
 }
 
@@ -148,11 +163,25 @@ async function initDatabase() {
       last_name TEXT NOT NULL,
       identifier TEXT NOT NULL UNIQUE,
       initials TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      password_hash TEXT
     );
   `);
 
   await ensureColumn('courses', 'archived_at', 'TEXT');
+  await ensureColumn('admins', 'password_hash', 'TEXT');
+
+  const adminsWithoutPassword = await db.all(
+    "SELECT id FROM admins WHERE password_hash IS NULL OR TRIM(password_hash) = ''"
+  );
+
+  if (adminsWithoutPassword.length) {
+    const fallbackHash = await hashPassword(DEFAULT_ADMIN_PASSWORD);
+    const updatePromises = adminsWithoutPassword.map((admin) =>
+      db.run('UPDATE admins SET password_hash = ? WHERE id = ?', [fallbackHash, admin.id])
+    );
+    await Promise.all(updatePromises);
+  }
 
   const driverCount = await db.get('SELECT COUNT(*) as count FROM drivers');
   if (driverCount.count === 0) {
@@ -237,11 +266,6 @@ async function initDatabase() {
         ]
       );
 
-      if (course.status === 'completed') {
-        await logActivity(result.lastID, 'completed', 'LS', 'Course importée comme terminée');
-      } else {
-        await logActivity(result.lastID, 'created', 'LS', 'Course importée');
-      }
     }
   }
 
@@ -399,10 +423,14 @@ app.get('/api/admins', async (req, res) => {
 
 app.post('/api/admins', async (req, res) => {
   try {
-    const { firstName, lastName } = req.body;
+    const { firstName, lastName, password } = req.body;
 
     if (!firstName || !lastName) {
       return res.status(400).json({ message: 'Le prénom et le nom sont obligatoires.' });
+    }
+
+    if (!password) {
+      return res.status(400).json({ message: 'Le mot de passe administrateur est obligatoire.' });
     }
 
     const identifier = await generateUniqueAdminIdentifier(firstName, lastName);
@@ -412,11 +440,12 @@ app.post('/api/admins', async (req, res) => {
 
     const initials = buildAdminInitials(firstName, lastName);
     const createdAt = new Date().toISOString();
+    const passwordHash = await hashPassword(password);
 
     const result = await db.run(
-      `INSERT INTO admins (first_name, last_name, identifier, initials, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
-      [firstName.trim(), lastName.trim(), identifier, initials, createdAt]
+      `INSERT INTO admins (first_name, last_name, identifier, initials, created_at, password_hash)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [firstName.trim(), lastName.trim(), identifier, initials, createdAt, passwordHash]
     );
 
     const admin = await db.get('SELECT id, first_name, last_name, identifier, initials, created_at FROM admins WHERE id = ?', [
@@ -439,24 +468,29 @@ app.post('/api/admins', async (req, res) => {
 
 app.post('/api/admins/login', async (req, res) => {
   try {
-    const { identifier, firstName, lastName } = req.body;
+    const { identifier, firstName, lastName, password } = req.body;
 
     if (!identifier && (!firstName || !lastName)) {
       return res.status(400).json({ message: 'Identifiant ou couple prénom/nom requis.' });
+    }
+
+    if (!password) {
+      return res.status(400).json({ message: 'Le mot de passe est requis pour la connexion administrateur.' });
     }
 
     let admin;
 
     if (identifier) {
       admin = await db.get(
-        'SELECT id, first_name, last_name, identifier, initials, created_at FROM admins WHERE LOWER(identifier) = ?',
+        `SELECT id, first_name, last_name, identifier, initials, created_at, password_hash
+         FROM admins WHERE LOWER(identifier) = ?`,
         [identifier.toLowerCase()]
       );
     }
 
     if (!admin && firstName && lastName) {
       admin = await db.get(
-        `SELECT id, first_name, last_name, identifier, initials, created_at
+        `SELECT id, first_name, last_name, identifier, initials, created_at, password_hash
          FROM admins
          WHERE LOWER(first_name) = ? AND LOWER(last_name) = ?`,
         [firstName.trim().toLowerCase(), lastName.trim().toLowerCase()]
@@ -465,6 +499,11 @@ app.post('/api/admins/login', async (req, res) => {
 
     if (!admin) {
       return res.status(404).json({ message: 'Compte administrateur introuvable.' });
+    }
+
+    const isValidPassword = await comparePassword(password, admin.password_hash);
+    if (!isValidPassword) {
+      return res.status(401).json({ message: 'Identifiants administrateur invalides.' });
     }
 
     res.json({

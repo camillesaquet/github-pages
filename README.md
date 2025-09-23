@@ -41,7 +41,8 @@ La base SQLite est initialisée automatiquement au démarrage dans le dossier `d
 ### Accès administrateur
 
 - Lors de la connexion, cliquez sur « Connexion administration » puis saisissez votre identifiant : initiale du prénom suivie du nom en minuscules (ex. `lsaquet`).
-- Il est possible de créer un nouveau compte directement depuis cette fenêtre en renseignant un prénom et un nom. L'application génère automatiquement l'identifiant associé.
+- Un mot de passe est requis pour accéder à l'espace d'administration. Le compte de démonstration créé automatiquement utilise le mot de passe `admin` (modifiable via la variable d'environnement `ADMIN_DEFAULT_PASSWORD`).
+- Il est possible de créer un nouveau compte directement depuis cette fenêtre en renseignant un prénom et un nom. L'application génère automatiquement l'identifiant associé et vous invite à définir un mot de passe (aucune contrainte particulière).
 - Toutes les actions menées depuis l'administration (création, édition, archivage, suppression) sont historisées dans le journal avec les initiales de l'administrateur connecté.
 
 ## Scripts complémentaires

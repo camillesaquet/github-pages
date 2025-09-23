@@ -96,6 +96,17 @@
                     required
                   />
                 </div>
+                <div>
+                  <label for="admin-password-input" class="form-label">Mot de passe</label>
+                  <input
+                    type="password"
+                    id="admin-password-input"
+                    class="form-input"
+                    placeholder="Votre mot de passe"
+                    autocomplete="current-password"
+                    required
+                  />
+                </div>
                 <button type="submit" class="btn-primary w-full sm:w-auto">
                   <i class="fas fa-right-to-bracket mr-2"></i> Se connecter
                 </button>
@@ -121,6 +132,18 @@
                 <div>
                   <label for="admin-create-last-name" class="form-label">Nom</label>
                   <input type="text" id="admin-create-last-name" class="form-input" required />
+                </div>
+                <div class="md:col-span-2">
+                  <label for="admin-create-password" class="form-label">Mot de passe</label>
+                  <input
+                    type="password"
+                    id="admin-create-password"
+                    class="form-input"
+                    placeholder="Définissez un mot de passe"
+                    autocomplete="new-password"
+                    required
+                  />
+                  <p class="text-xs text-gray-500 mt-1">Aucune contrainte particulière, choisissez un mot de passe simple à retenir.</p>
                 </div>
                 <div id="admin-identifier-preview" class="md:col-span-2 text-sm text-gray-600 hidden">
                   Identifiant généré :
