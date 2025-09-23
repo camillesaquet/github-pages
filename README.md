@@ -1,48 +1,86 @@
-# GitHub Pages
+# Agri Holann – Gestion des chauffeurs
 
-_Create a site or blog from your GitHub repositories with GitHub Pages._
+Application web permettant à l'entreprise Agri Holann de planifier les tournées de ses chauffeurs, de suivre l'exécution des courses et de centraliser les justificatifs de transport.
 
-## Welcome
+## Fonctionnalités principales
 
-- **Who is this for**: Beginners, students, project maintainers, small businesses.
-- **What you'll learn**: How to build a GitHub Pages site.
-- **What you'll build**: We'll build a simple GitHub Pages site with a blog. We'll use [Jekyll](https://jekyllrb.com), a static site generator.
-- **Prerequisites**: If you need to learn about branches, commits, and pull requests, take [Introduction to GitHub](https://github.com/skills/introduction-to-github) first.
+- **Authentification simplifiée** : recherche et connexion d'un chauffeur par son nom de famille, accès dédié à l'administration.
+- **Tableaux de bord** : vue chauffeur (courses du jour et de la semaine) et vue administrateur (planning global, filtres par chauffeur, journal des activités).
+- **Comptes administrateurs** : création et connexion d'un compte dont l'identifiant est construit à partir de l'initiale du prénom et du nom de famille, suivi des actions avec ces initiales.
+- **Gestion du parc de chauffeurs** : ajout/suppression de chauffeurs depuis l'administration, sélection rapide dans les formulaires de création de course.
+- **Archivage avancé** : onglet dédié pour consulter les courses archivées avec filtres par chauffeur, période et type de marchandise, archivage/désarchivage directement depuis le journal d'activité.
+- **Gestion complète des courses** : création, édition, suppression et validation avec prise de photo du bon de transport.
+- **Notifications par e-mail** : envoi automatique (transport simulé) d'un récapitulatif au siège lors de la validation d'une course.
+- **Persistance des données** : stockage des chauffeurs, courses, journaux d'activité et e-mails simulés dans une base SQLite embarquée.
 
-- **How long**: This exercise takes less than one hour to complete.
+## Démarrage rapide
 
-In this exercise, you will:
+### Prérequis
 
-1. Enable GitHub Pages
-1. Configure your site
-1. Customize your home page
-1. Create a blog post
-1. Merge your pull request
+- [Node.js](https://nodejs.org/) 18 ou plus récent
+- npm (fourni avec Node.js)
 
+### Installation
 
-### How to start this exercise
+```bash
+npm install
+```
 
-Simply copy the exercise to your account, then give your favorite Octocat (Mona) **about 20 seconds** to prepare the first lesson, then **refresh the page**.
+### Lancer l'application
 
-[![](https://img.shields.io/badge/Copy%20Exercise-%E2%86%92-1f883d?style=for-the-badge&logo=github&labelColor=197935)](https://github.com/new?template_owner=skills&template_name=github-pages&owner=%40me&name=skills-github-pages&description=Exercise:+Create+a+site+or+blog+from+your+GitHub+repositories+with+GitHub+Pages&visibility=public)
+```bash
+npm start
+```
 
-<details>
-<summary>Having trouble? 🤷</summary><br/>
+Le serveur écoute par défaut sur [http://localhost:3000](http://localhost:3000) et sert à la fois l'API et l'interface web.
 
-When copying the exercise, we recommend the following settings:
+### Structure des données
 
-- For owner, choose your personal account or an organization to host the repository.
+La base SQLite est initialisée automatiquement au démarrage dans le dossier `db/agriholann.db` avec des données de démonstration (chauffeurs et courses). Les photos prises lors des validations ainsi que les pièces jointes des e-mails simulés sont stockées dans `storage/attachments`.
 
-- We recommend creating a public repository, since private repositories will use Actions minutes.
+### Accès administrateur
 
-If the exercise isn't ready in 20 seconds, please check the [Actions](../../actions) tab.
+- Lors de la connexion, cliquez sur « Connexion administration » puis saisissez votre identifiant : initiale du prénom suivie du nom en minuscules (ex. `lsaquet`).
+- Un mot de passe est requis pour accéder à l'espace d'administration. Le compte de démonstration créé automatiquement utilise le mot de passe `admin` (modifiable via la variable d'environnement `ADMIN_DEFAULT_PASSWORD`).
+- Il est possible de créer un nouveau compte directement depuis cette fenêtre en renseignant un prénom et un nom. L'application génère automatiquement l'identifiant associé et vous invite à définir un mot de passe (aucune contrainte particulière).
+- Toutes les actions menées depuis l'administration (création, édition, archivage, suppression) sont historisées dans le journal avec les initiales de l'administrateur connecté.
 
-- Check to see if a job is running. Sometimes it simply takes a bit longer.
+## Scripts complémentaires
 
-- If the page shows a failed job, please submit an issue. Nice, you found a bug! 🐛
+| Commande | Description |
+| --- | --- |
+| `npm start` | Lance le serveur Express en mode production. |
+| `npm run dev` | Lance le serveur avec rechargement via nodemon. |
+| `npm run init-db` | Réinitialise la base en exécutant le script d'initialisation (utilisé automatiquement au démarrage). |
 
-</details>
+## API (aperçu)
 
----
+| Méthode | Chemin | Description |
+| --- | --- | --- |
+| `GET /api/drivers` | Liste les chauffeurs (filtrage via `?search=`). |
+| `POST /api/drivers` | Ajoute un chauffeur. |
+| `DELETE /api/drivers/:id` | Supprime un chauffeur et ses courses associées. |
+| `GET /api/admins` | Liste les comptes administrateurs existants. |
+| `POST /api/admins` | Crée un compte administrateur à partir d'un prénom et d'un nom. |
+| `POST /api/admins/login` | Connecte un administrateur via son identifiant généré. |
+| `GET /api/courses` | Liste les courses avec filtres `driverId`, `from`, `to`, `archived`. |
+| `GET /api/courses/:id` | Récupère le détail d'une course. |
+| `POST /api/courses` | Crée une nouvelle course. |
+| `PUT /api/courses/:id` | Met à jour une course existante. |
+| `DELETE /api/courses/:id` | Supprime une course. |
+| `POST /api/courses/:id/complete` | Valide une course, sauvegarde la photo et journalise l'activité. |
+| `POST /api/courses/:id/archive` | Archive une course active. |
+| `POST /api/courses/:id/unarchive` | Restaure une course archivée. |
+| `GET /api/activity` | Retourne le journal des actions sur les courses. |
+| `GET /api/emails` | Liste les e-mails simulés envoyés lors des validations. |
 
-&copy; 2025 GitHub &bull; [Code of Conduct](https://www.contributor-covenant.org/version/2/1/code_of_conduct/code_of_conduct.md) &bull; [MIT License](https://gh.io/mit)
+## Développement futur
+
+- Ajout d'une authentification sécurisée (mots de passe / SSO).
+- Intégration à un vrai service SMTP pour l'envoi d'e-mails.
+- Exposition d'API supplémentaires pour le reporting.
+- Mise en place de tests automatisés (unitaires et end-to-end).
+
+## Licence
+
+Ce projet est distribué sous licence MIT.
