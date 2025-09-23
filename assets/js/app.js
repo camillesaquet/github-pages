@@ -635,6 +635,7 @@ async function loadDriverCourses() {
     from: pastWindow.toISOString(),
     to: nextWeek.toISOString(),
   });
+  params.append('archived', 'all');
 
   try {
     const courses = await apiFetch(`/courses?${params.toString()}`);
@@ -1063,9 +1064,21 @@ function renderTodayCourses() {
     .sort((a, b) => a.date.getTime() - b.date.getTime())
     .forEach((course) => {
       const container = document.createElement('div');
-      container.className = 'course-item bg-white p-4 rounded-lg shadow-sm border border-gray-200 cursor-pointer transition';
-      const statusClass =
-        course.status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
+      const archived = course.isArchived;
+      const baseClasses = 'course-item bg-white p-4 rounded-lg shadow-sm border border-gray-200 transition';
+      container.className = `${baseClasses} ${archived ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`;
+      container.setAttribute('aria-disabled', archived ? 'true' : 'false');
+
+      const statusClass = archived
+        ? 'bg-gray-200 text-gray-600'
+        : course.status === 'completed'
+        ? 'bg-green-100 text-green-800'
+        : 'bg-yellow-100 text-yellow-800';
+      const statusLabel = archived
+        ? 'Archivée'
+        : course.status === 'completed'
+        ? 'Terminé'
+        : 'À faire';
 
       container.innerHTML = `
         <div class="flex justify-between items-start">
@@ -1074,13 +1087,16 @@ function renderTodayCourses() {
             <div class="text-sm text-gray-500 mt-1">${formatTime(course.date)} • ${course.merchandise}</div>
           </div>
           <span class="px-2 py-1 text-xs rounded-full ${statusClass}">
-            ${course.status === 'completed' ? 'Terminé' : 'À faire'}
+            ${statusLabel}
           </span>
         </div>
         ${course.comments ? `<div class="mt-2 text-sm text-gray-600"><i class="fas fa-comment mr-1"></i> ${course.comments}</div>` : ''}
       `;
 
-      container.addEventListener('click', () => openCourseModal(course.id));
+      if (!archived) {
+        container.addEventListener('click', () => openCourseModal(course.id));
+      }
+
       elements.todayList.appendChild(container);
     });
 }
@@ -1100,9 +1116,20 @@ function renderWeekCourses() {
     .sort((a, b) => a.date.getTime() - b.date.getTime())
     .forEach((course) => {
       const row = document.createElement('tr');
-      row.className = 'hover:bg-gray-50 cursor-pointer';
-      const statusClass =
-        course.status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
+      const archived = course.isArchived;
+      row.className = `${archived ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'hover:bg-gray-50 cursor-pointer'}`;
+      row.setAttribute('aria-disabled', archived ? 'true' : 'false');
+
+      const statusClass = archived
+        ? 'bg-gray-200 text-gray-600'
+        : course.status === 'completed'
+        ? 'bg-green-100 text-green-800'
+        : 'bg-yellow-100 text-yellow-800';
+      const statusLabel = archived
+        ? 'Archivée'
+        : course.status === 'completed'
+        ? 'Terminé'
+        : 'À faire';
 
       row.innerHTML = `
         <td class="px-6 py-4 whitespace-nowrap">${formatDate(course.date)}</td>
@@ -1111,12 +1138,15 @@ function renderWeekCourses() {
         <td class="px-6 py-4 whitespace-nowrap">${formatTime(course.date)}</td>
         <td class="px-6 py-4 whitespace-nowrap">
           <span class="px-2 py-1 text-xs rounded-full ${statusClass}">
-            ${course.status === 'completed' ? 'Terminé' : 'À faire'}
+            ${statusLabel}
           </span>
         </td>
       `;
 
-      row.addEventListener('click', () => openCourseModal(course.id));
+      if (!archived) {
+        row.addEventListener('click', () => openCourseModal(course.id));
+      }
+
       elements.weekList.appendChild(row);
     });
 }
@@ -1206,33 +1236,55 @@ function renderActivityLog() {
       minute: '2-digit',
     });
 
-    const actionText =
-      item.action === 'created'
-        ? 'a créé une course'
-        : item.action === 'modified'
-        ? 'a modifié une course'
-        : item.action === 'completed'
-        ? 'a complété une course'
-        : item.action === 'deleted'
-        ? 'a supprimé une course'
-        : item.action === 'archived'
-        ? 'a archivé une course'
-        : item.action === 'restored'
-        ? 'a restauré une course'
-        : item.action;
-
+    const metadata = item.metadata || null;
+    const driverSuffix = item.course && item.course.driverName ? ` pour ${item.course.driverName}` : '';
     const courseInfo = item.course
-      ? `${item.course.departure || ''} → ${item.course.destination || ''} • ${item.course.dateTime ? new Date(item.course.dateTime).toLocaleDateString('fr-FR') : ''}`
+      ? `${item.course.departure || ''} → ${item.course.destination || ''} • ${
+          item.course.dateTime ? new Date(item.course.dateTime).toLocaleDateString('fr-FR') : ''
+        }`
       : '';
+
+    let bubbleText = item.user;
+    let primaryText;
+
+    if (item.action === 'created_completed') {
+      const createdBy = metadata?.createdBy || item.user;
+      const completedBy = metadata?.completedBy || createdBy;
+
+      if (createdBy && completedBy && createdBy !== completedBy) {
+        bubbleText = `${createdBy}/${completedBy}`;
+        primaryText = `Créée par ${createdBy} et validée par ${completedBy}${driverSuffix}`;
+      } else {
+        const actor = completedBy || createdBy || item.user;
+        bubbleText = actor;
+        primaryText = `Créée et validée par ${actor}${driverSuffix}`;
+      }
+    } else {
+      const actionText =
+        item.action === 'created'
+          ? 'a créé une course'
+          : item.action === 'modified'
+          ? 'a modifié une course'
+          : item.action === 'completed'
+          ? 'a complété une course'
+          : item.action === 'deleted'
+          ? 'a supprimé une course'
+          : item.action === 'archived'
+          ? 'a archivé une course'
+          : item.action === 'restored'
+          ? 'a restauré une course'
+          : item.action;
+      primaryText = `${item.user} ${actionText}${driverSuffix}`;
+    }
 
     logItem.innerHTML = `
       <div class="flex items-start">
         <div class="bg-blue-100 text-blue-800 w-8 h-8 rounded-full flex items-center justify-center font-medium mr-3">
-          ${item.user}
+          ${bubbleText}
         </div>
         <div class="flex-1">
           <div class="text-sm font-medium text-gray-900">
-            ${item.user} ${actionText}${item.course && item.course.driverName ? ` pour ${item.course.driverName}` : ''}
+            ${primaryText}
           </div>
           ${courseInfo ? `<div class="text-sm text-gray-500 mt-1">${courseInfo}</div>` : ''}
           <div class="text-xs text-gray-400 mt-1">${formattedDate}</div>
@@ -1472,6 +1524,12 @@ async function handleCourseEditorSubmit(event) {
 async function openCourseModal(courseId) {
   try {
     const course = await apiFetch(`/courses/${courseId}`);
+    const isArchived = Boolean(course.archivedAt);
+
+    if (!state.isAdmin && isArchived) {
+      return;
+    }
+
     state.currentCourseId = course.id;
     state.pendingCompletionComments = '';
 
@@ -1486,6 +1544,11 @@ async function openCourseModal(courseId) {
 
     elements.modalContent.innerHTML = `
       <div class="space-y-4">
+        ${isArchived ? `
+          <div class="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
+            Course archivée : visible à titre d'information uniquement.
+          </div>
+        ` : ''}
         <div>
           <h4 class="text-sm font-medium text-gray-500">Chauffeur</h4>
           <p class="mt-1 text-sm text-gray-900">${course.driverName || ''}</p>
@@ -1517,7 +1580,7 @@ async function openCourseModal(courseId) {
             <h4 class="text-sm font-medium text-gray-500">Commentaires de livraison</h4>
             <p class="mt-1 text-sm text-gray-900">${course.completionComments || 'Aucun commentaire'}</p>
           </div>
-        ` : !state.isAdmin ? `
+        ` : !state.isAdmin && !isArchived ? `
           <div class="pt-4">
             <label class="block text-sm font-medium text-gray-700 mb-1" for="completion-comments">Commentaires de livraison</label>
             <textarea id="completion-comments" class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500" rows="3" placeholder="Ajoutez des commentaires sur la livraison..."></textarea>
@@ -1542,7 +1605,7 @@ async function openCourseModal(courseId) {
       editButton.innerHTML = '<i class="fas fa-edit mr-1"></i> Modifier';
       editButton.addEventListener('click', () => editCourse(course.id));
       elements.modalActions.appendChild(editButton);
-    } else if (course.status !== 'completed') {
+    } else if (course.status !== 'completed' && !isArchived) {
       const validateButton = document.createElement('button');
       validateButton.type = 'button';
       validateButton.className = 'px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition';
@@ -1559,6 +1622,10 @@ async function openCourseModal(courseId) {
 }
 
 function completeCourse(courseId) {
+  const cached = state.courseCache.get(courseId);
+  if (cached?.isArchived) {
+    return;
+  }
   const commentsField = document.getElementById('completion-comments');
   state.pendingCompletionComments = commentsField ? commentsField.value : '';
   state.currentCourseId = courseId;

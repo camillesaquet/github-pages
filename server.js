@@ -272,11 +272,81 @@ async function initDatabase() {
   await ensureDefaultAdmin();
 }
 
+function normalizeActivityDetails(details) {
+  if (!details) {
+    return null;
+  }
+
+  if (typeof details === 'object') {
+    try {
+      return JSON.stringify(details);
+    } catch (error) {
+      console.warn('Unable to stringify activity details', error);
+      return null;
+    }
+  }
+
+  return details;
+}
+
+function parseActivityDetails(details) {
+  if (!details) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(details);
+  } catch (error) {
+    return null;
+  }
+}
+
 async function logActivity(courseId, action, user, details = null) {
   const timestamp = new Date().toISOString();
   await db.run(
     'INSERT INTO activity_log (course_id, action, user, details, timestamp) VALUES (?, ?, ?, ?, ?)',
-    [courseId, action, user, details, timestamp]
+    [courseId || null, action, user, normalizeActivityDetails(details), timestamp]
+  );
+}
+
+async function mergeCreationAndCompletionActivity(courseId, completionUser, completionDetails = null) {
+  const now = new Date().toISOString();
+  const creationEntry = await db.get(
+    `SELECT id, user, details
+       FROM activity_log
+      WHERE course_id = ? AND action IN ('created', 'created_completed')
+      ORDER BY id ASC
+      LIMIT 1`,
+    [courseId]
+  );
+
+  if (!creationEntry) {
+    await logActivity(courseId, 'completed', completionUser, {
+      completedBy: completionUser,
+      details: completionDetails || undefined,
+    });
+    return;
+  }
+
+  const metadata = parseActivityDetails(creationEntry.details) || {};
+  const createdBy = metadata.createdBy || creationEntry.user || completionUser;
+  const payload = {
+    createdBy,
+    completedBy: completionUser,
+  };
+
+  if (completionDetails) {
+    payload.details = completionDetails;
+  }
+
+  const displayUser =
+    createdBy === completionUser ? completionUser : `${createdBy}/${completionUser}`;
+
+  await db.run(
+    `UPDATE activity_log
+        SET action = ?, user = ?, details = ?, timestamp = ?
+      WHERE id = ?`,
+    ['created_completed', displayUser, JSON.stringify(payload), now, creationEntry.id]
   );
 }
 
@@ -667,7 +737,8 @@ app.post('/api/courses', async (req, res) => {
 
     const course = await db.get('SELECT * FROM courses WHERE id = ?', [result.lastID]);
 
-    await logActivity(course.id, 'created', user || 'LS', 'Course créée');
+    const creator = user || 'LS';
+    await logActivity(course.id, 'created', creator, { createdBy: creator });
 
     res.status(201).json(course);
   } catch (error) {
@@ -814,7 +885,7 @@ app.post('/api/courses/:id/complete', async (req, res) => {
       [completionComments || null, photoPath, updatedAt, courseId]
     );
 
-    await logActivity(courseId, 'completed', userInitials || 'LS', 'Course terminée');
+    await mergeCreationAndCompletionActivity(courseId, userInitials || 'LS', completionComments || null);
 
     const completionEmail = await sendCompletionEmail(
       { ...course, photo_path: photoPath },
@@ -838,6 +909,7 @@ app.get('/api/activity', async (req, res) => {
        FROM activity_log a
        LEFT JOIN courses c ON c.id = a.course_id
        LEFT JOIN drivers d ON d.id = c.driver_id
+       WHERE c.archived_at IS NULL OR c.id IS NULL
        ORDER BY timestamp DESC
        LIMIT ?`,
       [limit]
@@ -850,6 +922,7 @@ app.get('/api/activity', async (req, res) => {
         user: row.user,
         details: row.details,
         timestamp: row.timestamp,
+        metadata: parseActivityDetails(row.details),
         course: row.course_id
           ? {
               id: row.course_id,
