@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agri Holann - Gestion des chauffeurs</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+      integrity="sha512-9usAa10IRO0HhonpyAIVpjrylPvoDwiPUiKdWk5t3PyolY1cOd4DSE0Ga+ri4AuTroPR5aXoaF5pB1zS3oU5w=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    />
+    <link rel="stylesheet" href="assets/css/styles.css" />
+  </head>
+  <body class="bg-gray-50 font-sans">
+    <div id="login-page" class="min-h-screen flex flex-col justify-center items-center p-4">
+      <div class="w-full max-w-md bg-white rounded-lg shadow-md overflow-hidden fade-in">
+        <div class="bg-green-600 py-4 px-6">
+          <h1 class="text-2xl font-bold text-white">Agri Holann</h1>
+          <p class="text-green-100">Gestion des chauffeurs</p>
+        </div>
+        <div class="p-6">
+          <div class="mb-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-2">Connexion chauffeur</h2>
+            <p class="text-gray-600">Veuillez entrer votre nom de famille</p>
+          </div>
+          <div class="mb-4">
+            <label for="lastname" class="block text-sm font-medium text-gray-700 mb-1"
+              >Nom de famille</label
+            >
+            <input
+              type="text"
+              id="lastname"
+              class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+              placeholder="Dupont"
+            />
+          </div>
+          <div id="driver-results" class="mb-4 max-h-60 overflow-y-auto hidden">
+            <p class="text-sm text-gray-500 mb-2">Sélectionnez votre nom :</p>
+            <div id="driver-list" class="space-y-2"></div>
+          </div>
+          <div class="pt-4 border-t border-gray-200">
+            <button
+              id="admin-login"
+              class="w-full py-2 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition duration-200"
+            >
+              <i class="fas fa-user-cog mr-2"></i> Connexion administration
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="mt-6 text-center text-gray-500 text-sm">
+        <p>© 2023 SAS Agri Holann - Tous droits réservés</p>
+      </div>
+    </div>
+
+    <div id="driver-dashboard" class="min-h-screen hidden">
+      <header class="bg-green-600 text-white shadow-md">
+        <div class="container mx-auto px-4 py-3 flex justify-between items-center">
+          <div>
+            <h1 class="text-xl font-bold">Agri Holann</h1>
+            <p id="driver-name" class="text-sm opacity-90">Jean Dupont</p>
+          </div>
+          <button
+            id="logout-btn"
+            class="bg-white text-green-600 px-3 py-1 rounded-md text-sm font-medium hover:bg-gray-100 transition"
+          >
+            <i class="fas fa-sign-out-alt mr-1"></i> Déconnexion
+          </button>
+        </div>
+      </header>
+
+      <main class="container mx-auto px-4 py-6">
+        <div class="flex border-b border-gray-200 mb-6">
+          <button id="today-tab" class="tab-button tab-button--active">Aujourd'hui</button>
+          <button id="week-tab" class="tab-button">Semaine</button>
+          <button id="new-course-tab" class="tab-button ml-auto">
+            <i class="fas fa-plus mr-1"></i> Nouvelle course
+          </button>
+        </div>
+
+        <div id="today-courses">
+          <h2 class="section-title">Vos courses aujourd'hui</h2>
+          <div id="today-list" class="space-y-3"></div>
+          <div id="no-courses-today" class="empty-state hidden">
+            <i class="fas fa-calendar-day text-4xl mb-3 opacity-30"></i>
+            <p>Aucune course prévue aujourd'hui</p>
+          </div>
+        </div>
+
+        <div id="week-courses" class="hidden">
+          <h2 class="section-title">Vos courses cette semaine</h2>
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th scope="col" class="table-heading">Date</th>
+                  <th scope="col" class="table-heading">Départ</th>
+                  <th scope="col" class="table-heading">Arrivée</th>
+                  <th scope="col" class="table-heading">Horaire</th>
+                  <th scope="col" class="table-heading">Statut</th>
+                </tr>
+              </thead>
+              <tbody id="week-list" class="bg-white divide-y divide-gray-200"></tbody>
+            </table>
+          </div>
+          <div id="no-courses-week" class="empty-state hidden">
+            <i class="fas fa-calendar-week text-4xl mb-3 opacity-30"></i>
+            <p>Aucune course prévue cette semaine</p>
+          </div>
+        </div>
+
+        <div id="new-course-form" class="hidden">
+          <h2 class="section-title">Nouvelle course</h2>
+          <form id="add-course-form" class="space-y-4">
+            <div id="admin-driver-field" class="hidden">
+              <label class="form-label">Chauffeur</label>
+              <select
+                id="admin-driver-picker"
+                class="form-input"
+                aria-label="Sélection du chauffeur pour la nouvelle course"
+              ></select>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="form-label" for="course-date">Date</label>
+                <input type="date" id="course-date" class="form-input" required />
+              </div>
+              <div>
+                <label class="form-label" for="course-time">Heure</label>
+                <input type="time" id="course-time" class="form-input" required />
+              </div>
+            </div>
+            <div>
+              <label class="form-label" for="departure">Lieu de départ</label>
+              <input type="text" id="departure" class="form-input" required />
+            </div>
+            <div>
+              <label class="form-label" for="destination">Destination</label>
+              <input type="text" id="destination" class="form-input" required />
+            </div>
+            <div>
+              <label class="form-label" for="merchandise-type">Type de marchandise</label>
+              <select id="merchandise-type" class="form-input">
+                <option value="Céréales">Céréales</option>
+                <option value="Légumes">Légumes</option>
+                <option value="Fruits">Fruits</option>
+                <option value="Engrais">Engrais</option>
+                <option value="Autre">Autre</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label" for="course-comments">Commentaires</label>
+              <textarea id="course-comments" class="form-input" rows="3"></textarea>
+            </div>
+            <div class="flex justify-end space-x-3 pt-4">
+              <button type="button" id="cancel-course" class="btn-secondary">Annuler</button>
+              <button type="submit" class="btn-primary">
+                <i class="fas fa-save mr-1"></i> Enregistrer
+              </button>
+            </div>
+          </form>
+        </div>
+      </main>
+    </div>
+
+    <div id="admin-dashboard" class="min-h-screen hidden">
+      <header class="bg-blue-600 text-white shadow-md">
+        <div class="container mx-auto px-4 py-3 flex justify-between items-center">
+          <div>
+            <h1 class="text-xl font-bold">Agri Holann - Administration</h1>
+            <p class="text-sm opacity-90">Connecté en tant qu'administrateur</p>
+          </div>
+          <button
+            id="admin-logout-btn"
+            class="bg-white text-blue-600 px-3 py-1 rounded-md text-sm font-medium hover:bg-gray-100 transition"
+          >
+            <i class="fas fa-sign-out-alt mr-1"></i> Déconnexion
+          </button>
+        </div>
+      </header>
+
+      <main class="container mx-auto px-4 py-6">
+        <div class="mb-6 bg-white p-4 rounded-lg shadow-sm">
+          <label class="form-label" for="admin-driver-select">Sélectionnez un chauffeur</label>
+          <div class="flex flex-col sm:flex-row sm:items-center sm:space-x-2 space-y-2 sm:space-y-0">
+            <select id="admin-driver-select" class="form-input flex-1">
+              <option value="all">Tous les chauffeurs</option>
+            </select>
+            <button id="new-course-admin" class="btn-admin">
+              <i class="fas fa-plus mr-1"></i> Nouvelle course
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <h2 class="section-title">Planning des courses</h2>
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th scope="col" class="table-heading">Chauffeur</th>
+                  <th scope="col" class="table-heading">Date</th>
+                  <th scope="col" class="table-heading">Départ</th>
+                  <th scope="col" class="table-heading">Arrivée</th>
+                  <th scope="col" class="table-heading">Horaire</th>
+                  <th scope="col" class="table-heading">Statut</th>
+                  <th scope="col" class="table-heading">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="admin-week-list" class="bg-white divide-y divide-gray-200"></tbody>
+            </table>
+          </div>
+          <div id="no-courses-admin" class="empty-state hidden">
+            <i class="fas fa-calendar-week text-4xl mb-3 opacity-30"></i>
+            <p>Aucune course prévue</p>
+          </div>
+        </div>
+
+        <div class="mt-8">
+          <h2 class="section-title">Journal des modifications</h2>
+          <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+            <div id="activity-log" class="divide-y divide-gray-200 max-h-96 overflow-y-auto"></div>
+          </div>
+          <div id="no-activity" class="empty-state hidden">
+            <i class="fas fa-clipboard-list text-4xl mb-3 opacity-30"></i>
+            <p>Aucune activité récente</p>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <div id="course-modal" class="modal hidden">
+      <div class="modal__dialog">
+        <div class="p-6">
+          <div class="flex justify-between items-start mb-4">
+            <h3 id="modal-title" class="text-xl font-semibold text-gray-800">Détails de la course</h3>
+            <button id="close-modal" class="text-gray-400 hover:text-gray-500">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <div id="modal-content"></div>
+          <div id="modal-actions" class="flex justify-end space-x-3 pt-6"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="photo-modal" class="modal hidden">
+      <div class="modal__dialog max-w-md">
+        <div class="p-6">
+          <div class="flex justify-between items-start mb-4">
+            <h3 class="text-xl font-semibold text-gray-800">Prendre une photo du bon</h3>
+            <button id="close-photo-modal" class="text-gray-400 hover:text-gray-500">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <div class="mb-4">
+            <div class="bg-gray-100 rounded-md h-64 flex items-center justify-center mb-3">
+              <video id="camera" class="w-full h-full object-cover rounded-md hidden" playsinline></video>
+              <canvas id="canvas" class="hidden"></canvas>
+              <div id="photo-placeholder" class="text-center text-gray-500">
+                <i class="fas fa-camera text-4xl mb-2"></i>
+                <p>Préparation de l'appareil photo...</p>
+              </div>
+            </div>
+            <div id="photo-preview" class="hidden">
+              <img
+                id="preview-img"
+                src=""
+                alt="Aperçu de la photo du bon"
+                class="w-full h-64 object-contain rounded-md border border-gray-200"
+              />
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-2 justify-between">
+            <button id="retake-photo" class="btn-secondary hidden">
+              <i class="fas fa-redo mr-1"></i> Reprendre
+            </button>
+            <div class="ml-auto flex gap-2">
+              <button id="capture-btn" class="btn-primary">
+                <i class="fas fa-camera mr-1"></i> Prendre une photo
+              </button>
+              <button id="confirm-photo" class="btn-primary hidden">
+                <i class="fas fa-check mr-1"></i> Confirmer
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Course Editor Modal (Admin) -->
+    <div id="course-editor-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 hidden">
+      <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto slide-in">
+        <div class="p-6">
+          <div class="flex justify-between items-start mb-4">
+            <h3 id="course-editor-title" class="text-xl font-semibold text-gray-800">Nouvelle course</h3>
+            <button id="close-course-editor" class="text-gray-400 hover:text-gray-500">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+
+          <form id="course-editor-form" class="space-y-4">
+            <div>
+              <label class="form-label" for="course-editor-driver">Chauffeur</label>
+              <select id="course-editor-driver" class="form-input" required>
+                <option value="">Sélectionnez un chauffeur</option>
+              </select>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="form-label" for="course-editor-date">Date</label>
+                <input type="date" id="course-editor-date" class="form-input" required />
+              </div>
+              <div>
+                <label class="form-label" for="course-editor-time">Heure</label>
+                <input type="time" id="course-editor-time" class="form-input" required />
+              </div>
+            </div>
+
+            <div>
+              <label class="form-label" for="course-editor-departure">Lieu de départ</label>
+              <input type="text" id="course-editor-departure" class="form-input" required />
+            </div>
+
+            <div>
+              <label class="form-label" for="course-editor-destination">Destination</label>
+              <input type="text" id="course-editor-destination" class="form-input" required />
+            </div>
+
+            <div>
+              <label class="form-label" for="course-editor-merchandise">Type de marchandise</label>
+              <select id="course-editor-merchandise" class="form-input">
+                <option value="Céréales">Céréales</option>
+                <option value="Légumes">Légumes</option>
+                <option value="Fruits">Fruits</option>
+                <option value="Engrais">Engrais</option>
+                <option value="Autre">Autre</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="form-label" for="course-editor-comments">Commentaires</label>
+              <textarea id="course-editor-comments" class="form-input" rows="3"></textarea>
+            </div>
+
+            <div class="flex justify-end space-x-3 pt-4">
+              <button type="button" id="cancel-course-editor" class="btn-secondary">Annuler</button>
+              <button type="submit" class="btn-primary">Enregistrer</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="assets/js/app.js"></script>
+  </body>
+</html>

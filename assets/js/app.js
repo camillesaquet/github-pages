@@ -1,0 +1,1008 @@
+const API_BASE = '/api';
+
+const state = {
+  drivers: [],
+  driverCourses: [],
+  adminCourses: [],
+  activityLog: [],
+  courseCache: new Map(),
+  currentUser: null,
+  isAdmin: false,
+  currentCourseId: null,
+  photoDataUrl: null,
+  pendingCompletionComments: '',
+};
+
+const elements = {
+  loginPage: document.getElementById('login-page'),
+  driverDashboard: document.getElementById('driver-dashboard'),
+  adminDashboard: document.getElementById('admin-dashboard'),
+  lastnameInput: document.getElementById('lastname'),
+  driverResults: document.getElementById('driver-results'),
+  driverList: document.getElementById('driver-list'),
+  adminLoginBtn: document.getElementById('admin-login'),
+  logoutBtn: document.getElementById('logout-btn'),
+  adminLogoutBtn: document.getElementById('admin-logout-btn'),
+  driverNameDisplay: document.getElementById('driver-name'),
+  todayTab: document.getElementById('today-tab'),
+  weekTab: document.getElementById('week-tab'),
+  newCourseTab: document.getElementById('new-course-tab'),
+  todayCourses: document.getElementById('today-courses'),
+  weekCourses: document.getElementById('week-courses'),
+  newCourseForm: document.getElementById('new-course-form'),
+  noCoursesToday: document.getElementById('no-courses-today'),
+  noCoursesWeek: document.getElementById('no-courses-week'),
+  todayList: document.getElementById('today-list'),
+  weekList: document.getElementById('week-list'),
+  adminDriverSelect: document.getElementById('admin-driver-select'),
+  adminWeekList: document.getElementById('admin-week-list'),
+  noCoursesAdmin: document.getElementById('no-courses-admin'),
+  activityLogList: document.getElementById('activity-log'),
+  noActivity: document.getElementById('no-activity'),
+  newCourseAdminBtn: document.getElementById('new-course-admin'),
+  addCourseForm: document.getElementById('add-course-form'),
+  adminDriverField: document.getElementById('admin-driver-field'),
+  adminDriverPicker: document.getElementById('admin-driver-picker'),
+  courseDate: document.getElementById('course-date'),
+  courseTime: document.getElementById('course-time'),
+  departure: document.getElementById('departure'),
+  destination: document.getElementById('destination'),
+  merchandiseType: document.getElementById('merchandise-type'),
+  courseComments: document.getElementById('course-comments'),
+  cancelCourseBtn: document.getElementById('cancel-course'),
+  courseModal: document.getElementById('course-modal'),
+  closeModalBtn: document.getElementById('close-modal'),
+  modalTitle: document.getElementById('modal-title'),
+  modalContent: document.getElementById('modal-content'),
+  modalActions: document.getElementById('modal-actions'),
+  photoModal: document.getElementById('photo-modal'),
+  closePhotoModalBtn: document.getElementById('close-photo-modal'),
+  camera: document.getElementById('camera'),
+  canvas: document.getElementById('canvas'),
+  photoPlaceholder: document.getElementById('photo-placeholder'),
+  photoPreview: document.getElementById('photo-preview'),
+  previewImg: document.getElementById('preview-img'),
+  captureBtn: document.getElementById('capture-btn'),
+  confirmPhotoBtn: document.getElementById('confirm-photo'),
+  retakePhotoBtn: document.getElementById('retake-photo'),
+  courseEditorModal: document.getElementById('course-editor-modal'),
+  courseEditorTitle: document.getElementById('course-editor-title'),
+  courseEditorForm: document.getElementById('course-editor-form'),
+  courseEditorDriver: document.getElementById('course-editor-driver'),
+  courseEditorDate: document.getElementById('course-editor-date'),
+  courseEditorTime: document.getElementById('course-editor-time'),
+  courseEditorDeparture: document.getElementById('course-editor-departure'),
+  courseEditorDestination: document.getElementById('course-editor-destination'),
+  courseEditorMerchandise: document.getElementById('course-editor-merchandise'),
+  courseEditorComments: document.getElementById('course-editor-comments'),
+  cancelCourseEditorBtn: document.getElementById('cancel-course-editor'),
+  closeCourseEditorBtn: document.getElementById('close-course-editor'),
+};
+
+function showElement(element) {
+  if (element) {
+    element.classList.remove('hidden');
+  }
+}
+
+function hideElement(element) {
+  if (element) {
+    element.classList.add('hidden');
+  }
+}
+
+function setDefaultCourseDateTime() {
+  const today = new Date();
+  elements.courseDate.value = today.toISOString().split('T')[0];
+  const nextHour = new Date(today.getTime() + 60 * 60 * 1000);
+  const hours = String(nextHour.getHours()).padStart(2, '0');
+  const minutes = String(nextHour.getMinutes()).padStart(2, '0');
+  elements.courseTime.value = `${hours}:${minutes}`;
+}
+
+async function apiFetch(path, options = {}) {
+  const config = {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+    ...options,
+  };
+
+  const response = await fetch(`${API_BASE}${path}`, config);
+  if (!response.ok) {
+    const errorPayload = await response.json().catch(() => ({}));
+    throw new Error(errorPayload.message || 'Une erreur est survenue');
+  }
+
+  if (response.status === 204) {
+    return null;
+  }
+
+  return response.json();
+}
+
+function normalizeDriver(driver) {
+  return {
+    id: driver.id,
+    firstName: driver.first_name || driver.firstName,
+    lastName: driver.last_name || driver.lastName,
+    email: driver.email || null,
+    phone: driver.phone || null,
+  };
+}
+
+function mapCourse(course) {
+  const date = new Date(course.dateTime || course.date_time || course.date);
+  const normalized = {
+    id: course.id,
+    driverId: course.driverId || course.driver_id,
+    driverName: course.driverName || course.driver_name || '',
+    date,
+    departure: course.departure,
+    destination: course.destination,
+    merchandise: course.merchandise || '',
+    comments: course.comments || '',
+    status: course.status,
+    photoUrl: course.photoUrl || course.photo_path || null,
+    completionComments: course.completionComments || course.completion_comments || '',
+    createdAt: course.createdAt || course.created_at || null,
+    updatedAt: course.updatedAt || course.updated_at || null,
+  };
+
+  state.courseCache.set(normalized.id, normalized);
+  return normalized;
+}
+
+function startOfDay(date) {
+  const newDate = new Date(date);
+  newDate.setHours(0, 0, 0, 0);
+  return newDate;
+}
+
+function addDays(date, days) {
+  const newDate = new Date(date);
+  newDate.setDate(newDate.getDate() + days);
+  return newDate;
+}
+
+function isSameDay(dateA, dateB) {
+  return startOfDay(dateA).getTime() === startOfDay(dateB).getTime();
+}
+
+function formatTime(date) {
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDate(date) {
+  return date.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+function getUserInitials() {
+  if (!state.currentUser) {
+    return 'LS';
+  }
+  const first = state.currentUser.firstName ? state.currentUser.firstName.charAt(0) : '';
+  const last = state.currentUser.lastName ? state.currentUser.lastName.charAt(0) : '';
+  return `${first}${last}`.toUpperCase() || 'LS';
+}
+
+async function searchDrivers() {
+  const searchTerm = elements.lastnameInput.value.trim();
+  if (searchTerm.length < 2) {
+    hideElement(elements.driverResults);
+    elements.driverList.innerHTML = '';
+    return;
+  }
+
+  try {
+    const drivers = await apiFetch(`/drivers?search=${encodeURIComponent(searchTerm)}`);
+    state.drivers = drivers.map(normalizeDriver);
+    renderDriverList(state.drivers);
+  } catch (error) {
+    console.error(error);
+    elements.driverList.innerHTML = '<p class="text-sm text-red-600">Erreur lors de la recherche</p>';
+    showElement(elements.driverResults);
+  }
+}
+
+function renderDriverList(drivers) {
+  if (!drivers.length) {
+    elements.driverList.innerHTML = '<p class="text-sm text-gray-500">Aucun chauffeur trouvé</p>';
+    showElement(elements.driverResults);
+    return;
+  }
+
+  elements.driverList.innerHTML = '';
+  drivers.forEach((driver) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'w-full text-left px-4 py-2 bg-gray-50 hover:bg-gray-100 rounded-md transition';
+    button.innerHTML = `
+      <div class="font-medium">${driver.firstName} ${driver.lastName}</div>
+      <div class="text-xs text-gray-500">Chauffeur</div>
+    `;
+    button.addEventListener('click', () => loginAsDriver(driver));
+    elements.driverList.appendChild(button);
+  });
+
+  showElement(elements.driverResults);
+}
+
+async function loginAsDriver(driver) {
+  state.currentUser = driver;
+  state.isAdmin = false;
+  elements.driverNameDisplay.textContent = `${driver.firstName} ${driver.lastName}`;
+  hideElement(elements.loginPage);
+  showElement(elements.driverDashboard);
+  hideElement(elements.adminDashboard);
+  switchTab('today');
+  await loadDriverCourses();
+}
+
+async function loginAsAdmin() {
+  state.currentUser = { firstName: 'Admin', lastName: 'Agri Holann' };
+  state.isAdmin = true;
+  hideElement(elements.loginPage);
+  hideElement(elements.driverDashboard);
+  showElement(elements.adminDashboard);
+  switchTab('week');
+  await loadAdminDrivers();
+  await loadAdminCourses();
+  await loadActivityLog();
+}
+
+function logout() {
+  state.currentUser = null;
+  state.isAdmin = false;
+  state.driverCourses = [];
+  state.adminCourses = [];
+  state.activityLog = [];
+  state.courseCache.clear();
+  elements.lastnameInput.value = '';
+  elements.driverList.innerHTML = '';
+  hideElement(elements.driverDashboard);
+  hideElement(elements.adminDashboard);
+  hideElement(elements.courseModal);
+  closePhotoModal();
+  closeCourseEditor();
+  showElement(elements.loginPage);
+  switchTab('today');
+}
+
+function switchTab(tab) {
+  const tabs = [elements.todayTab, elements.weekTab, elements.newCourseTab];
+  tabs.forEach((tabElement) => {
+    tabElement.classList.remove('tab-button--active');
+    tabElement.classList.add('text-gray-500');
+  });
+
+  hideElement(elements.todayCourses);
+  hideElement(elements.weekCourses);
+  hideElement(elements.newCourseForm);
+
+  if (tab === 'today') {
+    elements.todayTab.classList.add('tab-button--active');
+    elements.todayTab.classList.remove('text-gray-500');
+    showElement(elements.todayCourses);
+    renderTodayCourses();
+  } else if (tab === 'week') {
+    elements.weekTab.classList.add('tab-button--active');
+    elements.weekTab.classList.remove('text-gray-500');
+    showElement(elements.weekCourses);
+    renderWeekCourses();
+  } else if (tab === 'new-course') {
+    elements.newCourseTab.classList.add('tab-button--active');
+    elements.newCourseTab.classList.remove('text-gray-500');
+    showElement(elements.newCourseForm);
+    elements.adminDriverField.classList.toggle('hidden', !state.isAdmin);
+  }
+}
+
+async function loadDriverCourses() {
+  if (!state.currentUser) {
+    return;
+  }
+
+  const today = startOfDay(new Date());
+  const nextWeek = addDays(today, 7);
+  const params = new URLSearchParams({
+    driverId: state.currentUser.id,
+    from: today.toISOString(),
+    to: nextWeek.toISOString(),
+  });
+
+  try {
+    const courses = await apiFetch(`/courses?${params.toString()}`);
+    state.driverCourses = courses.map(mapCourse);
+    renderTodayCourses();
+    renderWeekCourses();
+  } catch (error) {
+    console.error('Erreur lors du chargement des courses chauffeur', error);
+  }
+}
+
+async function loadAdminDrivers() {
+  try {
+    const drivers = await apiFetch('/drivers');
+    state.drivers = drivers.map(normalizeDriver);
+    elements.adminDriverSelect.innerHTML = '<option value="all">Tous les chauffeurs</option>';
+    elements.adminDriverPicker.innerHTML = '<option value="">Sélectionnez un chauffeur</option>';
+    elements.courseEditorDriver.innerHTML = '<option value="">Sélectionnez un chauffeur</option>';
+
+    state.drivers.forEach((driver) => {
+      const option = document.createElement('option');
+      option.value = driver.id;
+      option.textContent = `${driver.firstName} ${driver.lastName}`;
+      elements.adminDriverSelect.appendChild(option);
+
+      const pickerOption = option.cloneNode(true);
+      elements.adminDriverPicker.appendChild(pickerOption);
+
+      const editorOption = option.cloneNode(true);
+      elements.courseEditorDriver.appendChild(editorOption);
+    });
+  } catch (error) {
+    console.error('Erreur lors du chargement des chauffeurs', error);
+  }
+}
+
+async function loadAdminCourses() {
+  const today = startOfDay(new Date());
+  const nextWeek = addDays(today, 7);
+  const params = new URLSearchParams({ from: today.toISOString(), to: nextWeek.toISOString() });
+
+  const selectedDriver = elements.adminDriverSelect.value;
+  if (selectedDriver && selectedDriver !== 'all') {
+    params.append('driverId', selectedDriver);
+  }
+
+  try {
+    const courses = await apiFetch(`/courses?${params.toString()}`);
+    state.adminCourses = courses.map(mapCourse);
+    renderAdminCourses();
+  } catch (error) {
+    console.error('Erreur lors du chargement des courses', error);
+  }
+}
+
+async function loadActivityLog() {
+  try {
+    const logItems = await apiFetch('/activity?limit=100');
+    state.activityLog = logItems;
+    renderActivityLog();
+  } catch (error) {
+    console.error("Erreur lors du chargement du journal d'activité", error);
+  }
+}
+
+function renderTodayCourses() {
+  elements.todayList.innerHTML = '';
+  const today = startOfDay(new Date());
+  const courses = state.driverCourses.filter((course) => isSameDay(course.date, today));
+
+  if (!courses.length) {
+    showElement(elements.noCoursesToday);
+    return;
+  }
+
+  hideElement(elements.noCoursesToday);
+
+  courses
+    .sort((a, b) => a.date.getTime() - b.date.getTime())
+    .forEach((course) => {
+      const container = document.createElement('div');
+      container.className = 'course-item bg-white p-4 rounded-lg shadow-sm border border-gray-200 cursor-pointer transition';
+      const statusClass =
+        course.status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
+
+      container.innerHTML = `
+        <div class="flex justify-between items-start">
+          <div>
+            <div class="font-medium">${course.departure} → ${course.destination}</div>
+            <div class="text-sm text-gray-500 mt-1">${formatTime(course.date)} • ${course.merchandise}</div>
+          </div>
+          <span class="px-2 py-1 text-xs rounded-full ${statusClass}">
+            ${course.status === 'completed' ? 'Terminé' : 'À faire'}
+          </span>
+        </div>
+        ${course.comments ? `<div class="mt-2 text-sm text-gray-600"><i class="fas fa-comment mr-1"></i> ${course.comments}</div>` : ''}
+      `;
+
+      container.addEventListener('click', () => openCourseModal(course.id));
+      elements.todayList.appendChild(container);
+    });
+}
+
+function renderWeekCourses() {
+  elements.weekList.innerHTML = '';
+
+  if (!state.driverCourses.length) {
+    showElement(elements.noCoursesWeek);
+    return;
+  }
+
+  hideElement(elements.noCoursesWeek);
+
+  state.driverCourses
+    .slice()
+    .sort((a, b) => a.date.getTime() - b.date.getTime())
+    .forEach((course) => {
+      const row = document.createElement('tr');
+      row.className = 'hover:bg-gray-50 cursor-pointer';
+      const statusClass =
+        course.status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
+
+      row.innerHTML = `
+        <td class="px-6 py-4 whitespace-nowrap">${formatDate(course.date)}</td>
+        <td class="px-6 py-4 whitespace-nowrap">${course.departure}</td>
+        <td class="px-6 py-4 whitespace-nowrap">${course.destination}</td>
+        <td class="px-6 py-4 whitespace-nowrap">${formatTime(course.date)}</td>
+        <td class="px-6 py-4 whitespace-nowrap">
+          <span class="px-2 py-1 text-xs rounded-full ${statusClass}">
+            ${course.status === 'completed' ? 'Terminé' : 'À faire'}
+          </span>
+        </td>
+      `;
+
+      row.addEventListener('click', () => openCourseModal(course.id));
+      elements.weekList.appendChild(row);
+    });
+}
+
+function renderAdminCourses() {
+  elements.adminWeekList.innerHTML = '';
+
+  if (!state.adminCourses.length) {
+    showElement(elements.noCoursesAdmin);
+    return;
+  }
+
+  hideElement(elements.noCoursesAdmin);
+
+  state.adminCourses
+    .slice()
+    .sort((a, b) => a.date.getTime() - b.date.getTime())
+    .forEach((course) => {
+      const row = document.createElement('tr');
+      row.className = 'hover:bg-gray-50';
+      const statusClass =
+        course.status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
+
+      row.innerHTML = `
+        <td class="px-6 py-4 whitespace-nowrap">${course.driverName || ''}</td>
+        <td class="px-6 py-4 whitespace-nowrap">${formatDate(course.date)}</td>
+        <td class="px-6 py-4 whitespace-nowrap">${course.departure}</td>
+        <td class="px-6 py-4 whitespace-nowrap">${course.destination}</td>
+        <td class="px-6 py-4 whitespace-nowrap">${formatTime(course.date)}</td>
+        <td class="px-6 py-4 whitespace-nowrap">
+          <span class="px-2 py-1 text-xs rounded-full ${statusClass}">
+            ${course.status === 'completed' ? 'Terminé' : 'À faire'}
+          </span>
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+          <button class="text-blue-600 hover:text-blue-900 mr-2" data-action="edit" aria-label="Modifier la course">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button class="text-red-600 hover:text-red-900" data-action="delete" aria-label="Supprimer la course">
+            <i class="fas fa-trash"></i>
+          </button>
+        </td>
+      `;
+
+      row.addEventListener('click', (event) => {
+        const target = event.target.closest('button');
+        if (target && target.dataset.action === 'edit') {
+          event.stopPropagation();
+          editCourse(course.id);
+        } else if (target && target.dataset.action === 'delete') {
+          event.stopPropagation();
+          deleteCourse(course.id);
+        } else {
+          openCourseModal(course.id);
+        }
+      });
+
+      elements.adminWeekList.appendChild(row);
+    });
+}
+
+function renderActivityLog() {
+  elements.activityLogList.innerHTML = '';
+
+  if (!state.activityLog.length) {
+    showElement(elements.noActivity);
+    return;
+  }
+
+  hideElement(elements.noActivity);
+
+  state.activityLog.forEach((item) => {
+    const logItem = document.createElement('div');
+    logItem.className = 'p-4';
+
+    const date = new Date(item.timestamp);
+    const formattedDate = date.toLocaleString('fr-FR', {
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    const actionText =
+      item.action === 'created'
+        ? 'a créé une course'
+        : item.action === 'modified'
+        ? 'a modifié une course'
+        : item.action === 'completed'
+        ? 'a complété une course'
+        : item.action === 'deleted'
+        ? 'a supprimé une course'
+        : item.action;
+
+    const courseInfo = item.course
+      ? `${item.course.departure || ''} → ${item.course.destination || ''} • ${item.course.dateTime ? new Date(item.course.dateTime).toLocaleDateString('fr-FR') : ''}`
+      : '';
+
+    logItem.innerHTML = `
+      <div class="flex items-start">
+        <div class="bg-blue-100 text-blue-800 w-8 h-8 rounded-full flex items-center justify-center font-medium mr-3">
+          ${item.user}
+        </div>
+        <div class="flex-1">
+          <div class="text-sm font-medium text-gray-900">
+            ${item.user} ${actionText}${item.course && item.course.driverName ? ` pour ${item.course.driverName}` : ''}
+          </div>
+          ${courseInfo ? `<div class="text-sm text-gray-500 mt-1">${courseInfo}</div>` : ''}
+          <div class="text-xs text-gray-400 mt-1">${formattedDate}</div>
+        </div>
+      </div>
+    `;
+
+    elements.activityLogList.appendChild(logItem);
+  });
+}
+
+async function handleAddCourse(event) {
+  event.preventDefault();
+
+  try {
+    const courseDate = elements.courseDate.value;
+    const courseTime = elements.courseTime.value;
+    const dateTime = new Date(`${courseDate}T${courseTime}`);
+
+    if (Number.isNaN(dateTime.getTime())) {
+      alert('Veuillez renseigner une date et une heure valides.');
+      return;
+    }
+
+    const payload = {
+      driverId: state.isAdmin
+        ? Number.parseInt(elements.adminDriverPicker.value, 10)
+        : state.currentUser?.id,
+      dateTime: dateTime.toISOString(),
+      departure: elements.departure.value,
+      destination: elements.destination.value,
+      merchandise: elements.merchandiseType.value,
+      comments: elements.courseComments.value,
+      user: getUserInitials(),
+    };
+
+    if (!payload.driverId) {
+      alert('Veuillez sélectionner un chauffeur.');
+      return;
+    }
+
+    if (state.currentCourseId) {
+      await apiFetch(`/courses/${state.currentCourseId}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+    } else {
+      await apiFetch('/courses', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    }
+
+    state.currentCourseId = null;
+    elements.addCourseForm.reset();
+    setDefaultCourseDateTime();
+
+    if (state.isAdmin) {
+      await loadAdminCourses();
+      await loadActivityLog();
+      switchTab('week');
+    } else {
+      await loadDriverCourses();
+      switchTab('today');
+    }
+  } catch (error) {
+    console.error('Erreur lors de la sauvegarde de la course', error);
+    alert(error.message);
+  }
+}
+
+async function editCourse(courseId) {
+  try {
+    const course = await apiFetch(`/courses/${courseId}`);
+    if (state.isAdmin) {
+      openCourseEditor(course);
+      return;
+    }
+    state.currentCourseId = course.id;
+
+    const date = new Date(course.dateTime);
+    elements.courseDate.value = date.toISOString().split('T')[0];
+    elements.courseTime.value = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    elements.departure.value = course.departure;
+    elements.destination.value = course.destination;
+    elements.merchandiseType.value = course.merchandise || 'Autre';
+    elements.courseComments.value = course.comments || '';
+
+    switchTab('new-course');
+    hideElement(elements.courseModal);
+  } catch (error) {
+    console.error('Erreur lors du chargement de la course', error);
+    alert(error.message);
+  }
+}
+
+async function deleteCourse(courseId) {
+  if (!confirm('Êtes-vous sûr de vouloir supprimer cette course ?')) {
+    return;
+  }
+
+  try {
+    await apiFetch(`/courses/${courseId}?user=${encodeURIComponent(getUserInitials())}`, {
+      method: 'DELETE',
+    });
+
+    if (state.isAdmin) {
+      await loadAdminCourses();
+      await loadActivityLog();
+    } else {
+      await loadDriverCourses();
+    }
+
+    hideElement(elements.courseModal);
+  } catch (error) {
+    console.error('Erreur lors de la suppression de la course', error);
+    alert(error.message);
+  }
+}
+
+function openCourseEditor(course) {
+  hideElement(elements.courseModal);
+  state.currentCourseId = course ? course.id : null;
+  const selectedFilter = elements.adminDriverSelect.value;
+  const baseDate = course ? new Date(course.dateTime) : new Date();
+
+  elements.courseEditorTitle.textContent = course
+    ? `Modifier la course #${course.id}`
+    : 'Nouvelle course';
+
+  if (course) {
+    elements.courseEditorDriver.value = course.driverId;
+  } else if (selectedFilter && selectedFilter !== 'all') {
+    elements.courseEditorDriver.value = selectedFilter;
+  } else {
+    elements.courseEditorDriver.value = '';
+  }
+
+  elements.courseEditorDate.value = baseDate.toISOString().split('T')[0];
+  elements.courseEditorTime.value = `${String(baseDate.getHours()).padStart(2, '0')}:${String(baseDate.getMinutes()).padStart(2, '0')}`;
+  elements.courseEditorDeparture.value = course ? course.departure : '';
+  elements.courseEditorDestination.value = course ? course.destination : '';
+  elements.courseEditorMerchandise.value = course ? course.merchandise || 'Autre' : 'Céréales';
+  elements.courseEditorComments.value = course ? course.comments || '' : '';
+
+  showElement(elements.courseEditorModal);
+}
+
+function closeCourseEditor() {
+  elements.courseEditorForm.reset();
+  state.currentCourseId = null;
+  hideElement(elements.courseEditorModal);
+}
+
+async function handleCourseEditorSubmit(event) {
+  event.preventDefault();
+
+  try {
+    const driverId = Number.parseInt(elements.courseEditorDriver.value, 10);
+    if (!driverId) {
+      alert('Veuillez sélectionner un chauffeur.');
+      return;
+    }
+
+    const date = elements.courseEditorDate.value;
+    const time = elements.courseEditorTime.value;
+    const dateTime = new Date(`${date}T${time}`);
+    if (Number.isNaN(dateTime.getTime())) {
+      alert('Veuillez renseigner une date et une heure valides.');
+      return;
+    }
+
+    const payload = {
+      driverId,
+      dateTime: dateTime.toISOString(),
+      departure: elements.courseEditorDeparture.value,
+      destination: elements.courseEditorDestination.value,
+      merchandise: elements.courseEditorMerchandise.value,
+      comments: elements.courseEditorComments.value,
+      user: getUserInitials(),
+    };
+
+    if (state.currentCourseId) {
+      await apiFetch(`/courses/${state.currentCourseId}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+    } else {
+      await apiFetch('/courses', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    }
+
+    closeCourseEditor();
+    await loadAdminCourses();
+    await loadActivityLog();
+  } catch (error) {
+    console.error('Erreur lors de la sauvegarde de la course', error);
+    alert(error.message);
+  }
+}
+
+async function openCourseModal(courseId) {
+  try {
+    const course = await apiFetch(`/courses/${courseId}`);
+    state.currentCourseId = course.id;
+    state.pendingCompletionComments = '';
+
+    const date = new Date(course.dateTime);
+    const formattedDate = date.toLocaleDateString('fr-FR', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+    });
+
+    elements.modalTitle.textContent = `Course #${course.id}`;
+
+    elements.modalContent.innerHTML = `
+      <div class="space-y-4">
+        <div>
+          <h4 class="text-sm font-medium text-gray-500">Chauffeur</h4>
+          <p class="mt-1 text-sm text-gray-900">${course.driverName || ''}</p>
+        </div>
+        <div>
+          <h4 class="text-sm font-medium text-gray-500">Date et heure</h4>
+          <p class="mt-1 text-sm text-gray-900">${formattedDate} à ${formatTime(date)}</p>
+        </div>
+        <div>
+          <h4 class="text-sm font-medium text-gray-500">Trajet</h4>
+          <p class="mt-1 text-sm text-gray-900">${course.departure} → ${course.destination}</p>
+        </div>
+        <div>
+          <h4 class="text-sm font-medium text-gray-500">Type de marchandise</h4>
+          <p class="mt-1 text-sm text-gray-900">${course.merchandise || 'Non renseigné'}</p>
+        </div>
+        ${course.comments ? `
+          <div>
+            <h4 class="text-sm font-medium text-gray-500">Commentaires</h4>
+            <p class="mt-1 text-sm text-gray-900">${course.comments}</p>
+          </div>
+        ` : ''}
+        ${course.status === 'completed' ? `
+          <div>
+            <h4 class="text-sm font-medium text-gray-500">Photo du bon</h4>
+            ${course.photoUrl ? `<img src="${course.photoUrl}?${Date.now()}" alt="Bon de transport" class="mt-2 w-full h-auto rounded-md border border-gray-200" />` : '<p class="mt-1 text-sm text-gray-500">Aucune photo</p>'}
+          </div>
+          <div>
+            <h4 class="text-sm font-medium text-gray-500">Commentaires de livraison</h4>
+            <p class="mt-1 text-sm text-gray-900">${course.completionComments || 'Aucun commentaire'}</p>
+          </div>
+        ` : !state.isAdmin ? `
+          <div class="pt-4">
+            <label class="block text-sm font-medium text-gray-700 mb-1" for="completion-comments">Commentaires de livraison</label>
+            <textarea id="completion-comments" class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500" rows="3" placeholder="Ajoutez des commentaires sur la livraison..."></textarea>
+          </div>
+        ` : ''}
+      </div>
+    `;
+
+    elements.modalActions.innerHTML = '';
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition';
+    closeButton.textContent = 'Fermer';
+    closeButton.addEventListener('click', () => hideElement(elements.courseModal));
+    elements.modalActions.appendChild(closeButton);
+
+    if (state.isAdmin) {
+      const editButton = document.createElement('button');
+      editButton.type = 'button';
+      editButton.className = 'px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition';
+      editButton.innerHTML = '<i class="fas fa-edit mr-1"></i> Modifier';
+      editButton.addEventListener('click', () => editCourse(course.id));
+      elements.modalActions.appendChild(editButton);
+    } else if (course.status !== 'completed') {
+      const validateButton = document.createElement('button');
+      validateButton.type = 'button';
+      validateButton.className = 'px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition';
+      validateButton.innerHTML = '<i class="fas fa-check mr-1"></i> Valider la course';
+      validateButton.addEventListener('click', () => completeCourse(course.id));
+      elements.modalActions.appendChild(validateButton);
+    }
+
+    showElement(elements.courseModal);
+  } catch (error) {
+    console.error('Erreur lors de la récupération de la course', error);
+    alert(error.message);
+  }
+}
+
+function completeCourse(courseId) {
+  const commentsField = document.getElementById('completion-comments');
+  state.pendingCompletionComments = commentsField ? commentsField.value : '';
+  state.currentCourseId = courseId;
+  openPhotoModal();
+}
+
+function openPhotoModal() {
+  state.photoDataUrl = null;
+  showElement(elements.photoModal);
+  hideElement(elements.camera);
+  hideElement(elements.photoPreview);
+  hideElement(elements.retakePhotoBtn);
+  hideElement(elements.confirmPhotoBtn);
+  showElement(elements.captureBtn);
+  showElement(elements.photoPlaceholder);
+
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    navigator.mediaDevices
+      .getUserMedia({ video: true })
+      .then((stream) => {
+        elements.camera.srcObject = stream;
+        elements.camera.play();
+        hideElement(elements.photoPlaceholder);
+        showElement(elements.camera);
+      })
+      .catch((error) => {
+        console.error('Accès caméra refusé', error);
+        elements.photoPlaceholder.innerHTML = `
+          <i class="fas fa-camera-slash text-4xl mb-2"></i>
+          <p>Impossible d'accéder à l'appareil photo</p>
+        `;
+      });
+  } else {
+    elements.photoPlaceholder.innerHTML = `
+      <i class="fas fa-camera-slash text-4xl mb-2"></i>
+      <p>Appareil photo non disponible</p>
+    `;
+  }
+}
+
+function closePhotoModal() {
+  if (elements.camera.srcObject) {
+    elements.camera.srcObject.getTracks().forEach((track) => track.stop());
+    elements.camera.srcObject = null;
+  }
+
+  hideElement(elements.photoModal);
+  state.photoDataUrl = null;
+}
+
+function capturePhoto() {
+  const context = elements.canvas.getContext('2d');
+  elements.canvas.width = elements.camera.videoWidth;
+  elements.canvas.height = elements.camera.videoHeight;
+  context.drawImage(elements.camera, 0, 0, elements.canvas.width, elements.canvas.height);
+
+  state.photoDataUrl = elements.canvas.toDataURL('image/jpeg');
+  elements.previewImg.src = state.photoDataUrl;
+
+  hideElement(elements.camera);
+  hideElement(elements.captureBtn);
+  showElement(elements.photoPreview);
+  showElement(elements.retakePhotoBtn);
+  showElement(elements.confirmPhotoBtn);
+}
+
+function retakePhoto() {
+  state.photoDataUrl = null;
+  showElement(elements.camera);
+  hideElement(elements.photoPreview);
+  hideElement(elements.retakePhotoBtn);
+  hideElement(elements.confirmPhotoBtn);
+  showElement(elements.captureBtn);
+}
+
+async function confirmPhoto() {
+  if (!state.currentCourseId) {
+    return;
+  }
+
+  try {
+    await apiFetch(`/courses/${state.currentCourseId}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({
+        completionComments: state.pendingCompletionComments,
+        photoDataUrl: state.photoDataUrl,
+        userInitials: getUserInitials(),
+      }),
+    });
+
+    await loadDriverCourses();
+    if (state.isAdmin) {
+      await loadAdminCourses();
+    }
+    await loadActivityLog();
+
+    closePhotoModal();
+    hideElement(elements.courseModal);
+    alert('Course validée et email envoyé.');
+  } catch (error) {
+    console.error('Erreur lors de la validation de la course', error);
+    alert(error.message);
+  }
+}
+
+function registerEventListeners() {
+  elements.lastnameInput.addEventListener('input', searchDrivers);
+  elements.adminLoginBtn.addEventListener('click', loginAsAdmin);
+  elements.logoutBtn.addEventListener('click', logout);
+  elements.adminLogoutBtn.addEventListener('click', logout);
+  elements.todayTab.addEventListener('click', () => switchTab('today'));
+  elements.weekTab.addEventListener('click', () => switchTab('week'));
+  elements.newCourseTab.addEventListener('click', () => {
+    state.currentCourseId = null;
+    elements.addCourseForm.reset();
+    setDefaultCourseDateTime();
+    if (state.isAdmin) {
+      const selected = elements.adminDriverSelect.value;
+      elements.adminDriverPicker.value = selected !== 'all' ? selected : '';
+    }
+    switchTab('new-course');
+  });
+  elements.addCourseForm.addEventListener('submit', handleAddCourse);
+  elements.cancelCourseBtn.addEventListener('click', () => {
+    state.currentCourseId = null;
+    elements.addCourseForm.reset();
+    setDefaultCourseDateTime();
+    switchTab(state.isAdmin ? 'week' : 'today');
+  });
+  elements.closeModalBtn.addEventListener('click', () => hideElement(elements.courseModal));
+  elements.closePhotoModalBtn.addEventListener('click', closePhotoModal);
+  elements.captureBtn.addEventListener('click', capturePhoto);
+  elements.confirmPhotoBtn.addEventListener('click', confirmPhoto);
+  elements.retakePhotoBtn.addEventListener('click', retakePhoto);
+  elements.adminDriverSelect.addEventListener('change', loadAdminCourses);
+  elements.newCourseAdminBtn.addEventListener('click', () => {
+    openCourseEditor();
+  });
+  elements.courseEditorForm.addEventListener('submit', handleCourseEditorSubmit);
+  elements.cancelCourseEditorBtn.addEventListener('click', closeCourseEditor);
+  elements.closeCourseEditorBtn.addEventListener('click', closeCourseEditor);
+
+  window.addEventListener('click', (event) => {
+    if (event.target === elements.courseModal) {
+      hideElement(elements.courseModal);
+    }
+    if (event.target === elements.photoModal) {
+      closePhotoModal();
+    }
+    if (event.target === elements.courseEditorModal) {
+      closeCourseEditor();
+    }
+  });
+}
+
+function init() {
+  setDefaultCourseDateTime();
+  registerEventListeners();
+}
+
+document.addEventListener('DOMContentLoaded', init);

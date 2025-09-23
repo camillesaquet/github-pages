@@ -25,6 +25,10 @@
 *.log
 *.sql
 *.sqlite
+node_modules/
+db/*.db
+storage/attachments/*
+!storage/attachments/.gitkeep
 
 # OS generated files #
 ######################
