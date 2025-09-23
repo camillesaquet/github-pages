@@ -526,7 +526,7 @@ app.get('/api/courses', async (req, res) => {
     }
 
     let query = `SELECT c.*, d.first_name, d.last_name FROM courses c
-      JOIN drivers d ON d.id = c.driver_id`;
+      LEFT JOIN drivers d ON d.id = c.driver_id`;
 
     if (conditions.length) {
       query += ' WHERE ' + conditions.join(' AND ');
@@ -539,7 +539,10 @@ app.get('/api/courses', async (req, res) => {
       rows.map((row) => ({
         id: row.id,
         driverId: row.driver_id,
-        driverName: `${row.first_name} ${row.last_name}`,
+        driverName:
+          row.first_name && row.last_name
+            ? `${row.first_name} ${row.last_name}`
+            : row.first_name || row.last_name || null,
         dateTime: row.date_time,
         departure: row.departure,
         destination: row.destination,
@@ -564,7 +567,7 @@ app.get('/api/courses/:id', async (req, res) => {
     const row = await db.get(
       `SELECT c.*, d.first_name, d.last_name
        FROM courses c
-       JOIN drivers d ON d.id = c.driver_id
+       LEFT JOIN drivers d ON d.id = c.driver_id
        WHERE c.id = ?`,
       [req.params.id]
     );
@@ -576,7 +579,10 @@ app.get('/api/courses/:id', async (req, res) => {
     res.json({
       id: row.id,
       driverId: row.driver_id,
-      driverName: `${row.first_name} ${row.last_name}`,
+      driverName:
+        row.first_name && row.last_name
+          ? `${row.first_name} ${row.last_name}`
+          : row.first_name || row.last_name || null,
       dateTime: row.date_time,
       departure: row.departure,
       destination: row.destination,

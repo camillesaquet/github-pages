@@ -605,10 +605,11 @@ async function loadDriverCourses() {
   }
 
   const today = startOfDay(new Date());
+  const pastWindow = addDays(today, -7);
   const nextWeek = addDays(today, 7);
   const params = new URLSearchParams({
     driverId: state.currentUser.id,
-    from: today.toISOString(),
+    from: pastWindow.toISOString(),
     to: nextWeek.toISOString(),
   });
 
@@ -794,7 +795,7 @@ async function loadAdminCourses() {
       to = addDays(today, 1);
       break;
     case 'week':
-      from = today;
+      from = addDays(today, -7);
       to = addDays(today, 7);
       break;
     case 'all':
