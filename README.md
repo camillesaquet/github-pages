@@ -10,55 +10,47 @@ Application web permettant à l'entreprise Agri Holann de planifier les tournée
 - **Gestion du parc de chauffeurs** : ajout/suppression de chauffeurs depuis l'administration, sélection rapide dans les formulaires de création de course.
 - **Archivage avancé** : onglet dédié pour consulter les courses archivées avec filtres par chauffeur, période et type de marchandise, archivage/désarchivage directement depuis le journal d'activité.
 - **Gestion complète des courses** : création, édition, suppression et validation avec prise de photo du bon de transport.
-- **Notifications par e-mail** : envoi automatique (transport simulé) d'un récapitulatif au siège lors de la validation d'une course.
+- **Notifications par e-mail simulées** : enregistrement d'un récapitulatif lors de la validation d'une course, avec la photo et les commentaires du chauffeur.
 - **Persistance des données** : stockage des chauffeurs, courses, journaux d'activité et e-mails simulés dans une base SQLite embarquée.
 
-## Démarrage rapide
+## Déploiement sur Hostinger
 
-### Prérequis
+L'application est prête à être copiée telle quelle sur une offre d'hébergement mutualisé (Apache + PHP) comme Hostinger. Le dossier `public_html/` contient l'intégralité des fichiers à exposer publiquement.
 
-- [Node.js](https://nodejs.org/) 18 ou plus récent
-- npm (fourni avec Node.js)
+1. **Copier les fichiers**
+   - Téléversez le contenu du dossier `public_html/` dans le dossier `public_html` de votre hébergement Hostinger.
+   - Créez à la racine du compte (au même niveau que `public_html`) un dossier `storage/` et conservez le fichier `.gitkeep` si vous utilisez Git.
 
-### Installation
+2. **Vérifier les permissions**
+   - Assurez-vous que les dossiers `storage/` et `public_html/uploads/` sont accessibles en écriture par PHP (`chmod 775` généralement suffisant).
 
-```bash
-npm install
-```
+3. **Accès à l'application**
+   - Rendez-vous sur l'URL de votre site. Le fichier `public_html/index.html` charge l'interface et communique avec les scripts PHP situés dans `public_html/api/`.
 
-### Lancer l'application
+Aucun serveur Node.js n'est requis : toutes les API sont servies par PHP et la base SQLite est initialisée automatiquement si elle n'existe pas.
 
-```bash
-npm start
-```
+## Structure des données
 
-Le serveur écoute par défaut sur [http://localhost:3000](http://localhost:3000) et sert à la fois l'API et l'interface web.
+- La base SQLite est créée dans `storage/agriholann.db` dès le premier accès à l'API.
+- Les photos déposées lors des validations sont sauvegardées dans `public_html/uploads/` et accessibles via l'URL `/uploads/nom-du-fichier`.
+- Les journaux d'activité et les e-mails simulés sont conservés dans la base SQLite.
 
-### Structure des données
+## Accès administrateur
 
-La base SQLite est initialisée automatiquement au démarrage dans le dossier `~/.agri-holann/db/agriholann.db` (ou dans le répertoire défini par la variable d'environnement `AGRI_DATA_DIR`). Ce dossier, créé sur la machine hôte et non suivi par Git, contient également un sous-dossier `attachments/` où sont déposées les photos et pièces jointes générées lors des validations de courses.
-
-### Accès administrateur
-
-- Lors de la connexion, cliquez sur « Connexion administration » puis saisissez votre identifiant : initiale du prénom suivie du nom en minuscules (ex. `lsaquet`).
-- Un mot de passe est requis pour accéder à l'espace d'administration. Le compte de démonstration créé automatiquement utilise le mot de passe `admin` (modifiable via la variable d'environnement `ADMIN_DEFAULT_PASSWORD`).
-- Il est possible de créer un nouveau compte directement depuis cette fenêtre en renseignant un prénom et un nom. L'application génère automatiquement l'identifiant associé et vous invite à définir un mot de passe (aucune contrainte particulière).
+- À la connexion, cliquez sur « Connexion administration » puis saisissez votre identifiant : initiale du prénom suivie du nom en minuscules (ex. `lsaquet`).
+- Un mot de passe est requis pour accéder à l'espace d'administration. Le compte de démonstration créé automatiquement utilise le mot de passe `admin` (modifiable en recréant l'utilisateur ou via la base).
+- Il est possible de créer un nouveau compte directement depuis la fenêtre dédiée en renseignant un prénom, un nom et un mot de passe. L'application génère automatiquement l'identifiant associé.
 - Toutes les actions menées depuis l'administration (création, édition, archivage, suppression) sont historisées dans le journal avec les initiales de l'administrateur connecté.
 
-## Scripts complémentaires
-
-| Commande | Description |
-| --- | --- |
-| `npm start` | Lance le serveur Express en mode production. |
-| `npm run dev` | Lance le serveur avec rechargement via nodemon. |
-| `npm run init-db` | Réinitialise la base en exécutant le script d'initialisation (utilisé automatiquement au démarrage). |
-
 ## API (aperçu)
+
+Les points d'entrées sont disponibles sous `https://votre-domaine/api/…` et renvoient toutes les réponses en JSON.
 
 | Méthode | Chemin | Description |
 | --- | --- | --- |
 | `GET /api/drivers` | Liste les chauffeurs (filtrage via `?search=`). |
 | `POST /api/drivers` | Ajoute un chauffeur. |
+| `GET /api/drivers/:id` | Retourne un chauffeur. |
 | `DELETE /api/drivers/:id` | Supprime un chauffeur et ses courses associées. |
 | `GET /api/admins` | Liste les comptes administrateurs existants. |
 | `POST /api/admins` | Crée un compte administrateur à partir d'un prénom et d'un nom. |
@@ -76,7 +68,7 @@ La base SQLite est initialisée automatiquement au démarrage dans le dossier `~
 
 ## Développement futur
 
-- Ajout d'une authentification sécurisée (mots de passe / SSO).
+- Ajout d'une authentification renforcée (règles de mot de passe, récupération, SSO, etc.).
 - Intégration à un vrai service SMTP pour l'envoi d'e-mails.
 - Exposition d'API supplémentaires pour le reporting.
 - Mise en place de tests automatisés (unitaires et end-to-end).

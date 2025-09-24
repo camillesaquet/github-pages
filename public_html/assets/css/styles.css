@@ -13,7 +13,7 @@ body {
   content: "";
   position: absolute;
   inset: 0;
-  background-image: url("../../image/login-background.jpg");
+  background-image: url("../../image/login.png");
   background-size: cover;
   background-position: center;
   filter: blur(6px);
