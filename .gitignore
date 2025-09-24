@@ -25,6 +25,9 @@
 *.log
 *.sql
 *.sqlite
+node_modules/
+db/*.db
+.agri-holann/
 
 # OS generated files #
 ######################
