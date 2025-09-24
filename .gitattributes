@@ -1,0 +1,10 @@
+* text=auto eol=lf
+*.js text diff=javascript
+*.ts text diff=typescript
+*.css text diff=css
+*.html text diff=html
+*.json text
+*.md text diff=markdown
+*.yml text
+data/** binary
+image/*.png binary

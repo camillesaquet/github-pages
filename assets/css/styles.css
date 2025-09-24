@@ -1,0 +1,468 @@
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.login-page {
+  position: relative;
+  overflow: hidden;
+}
+
+.login-page::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("../../image/login-background.jpg");
+  background-size: cover;
+  background-position: center;
+  filter: blur(6px);
+  transform: scale(1.05);
+  z-index: -2;
+}
+
+.login-page::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.65);
+  z-index: -1;
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.slide-in {
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.driver-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+.course-item:hover {
+  background-color: #f8fafc;
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes fadeInMobile {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.tab-button {
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+  color: rgb(107, 114, 128);
+  transition: color 0.2s ease;
+  border-bottom: 2px solid transparent;
+}
+
+.tab-button:hover {
+  color: rgb(22, 163, 74);
+}
+
+.tab-button--active {
+  color: rgb(22, 163, 74);
+  border-bottom-color: rgb(22, 163, 74);
+}
+
+.section-title {
+  margin-bottom: 1rem;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: rgb(31, 41, 55);
+}
+
+.table-heading {
+  padding: 0.75rem 1.5rem;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: rgb(107, 114, 128);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.empty-state {
+  padding: 2rem 0;
+  text-align: center;
+  color: rgb(107, 114, 128);
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: rgb(55, 65, 81);
+}
+
+.form-input {
+  width: 100%;
+  padding: 0.5rem 1rem;
+  border: 1px solid rgb(209, 213, 219);
+  border-radius: 0.375rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: rgb(22, 163, 74);
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.2);
+}
+
+.btn-primary,
+.btn-secondary,
+.btn-admin,
+.btn-tertiary,
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  font-weight: 500;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.btn-primary {
+  background-color: rgb(22, 163, 74);
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background-color: rgb(21, 128, 61);
+}
+
+.btn-secondary {
+  background-color: rgb(229, 231, 235);
+  color: rgb(55, 65, 81);
+}
+
+.btn-secondary:hover {
+  background-color: rgb(209, 213, 219);
+}
+
+.btn-admin {
+  background-color: rgb(37, 99, 235);
+  color: #fff;
+}
+
+.btn-admin:hover {
+  background-color: rgb(29, 78, 216);
+}
+
+.btn-tertiary {
+  background-color: rgb(243, 244, 246);
+  color: rgb(55, 65, 81);
+  border: 1px solid rgb(229, 231, 235);
+}
+
+.btn-tertiary:hover {
+  background-color: rgb(229, 231, 235);
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 50;
+}
+
+.modal__dialog {
+  background-color: #fff;
+  border-radius: 0.75rem;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  max-width: 28rem;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  animation: slideIn 0.3s ease-out;
+}
+
+.modal__dialog.max-w-md {
+  max-width: 28rem;
+}
+
+.btn-danger {
+  background-color: rgb(220, 38, 38);
+  color: #fff;
+}
+
+.btn-danger:hover {
+  background-color: rgb(185, 28, 28);
+}
+
+.admin-tab {
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+  color: rgb(75, 85, 99);
+  border-bottom: 2px solid transparent;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.admin-tab--active {
+  color: rgb(37, 99, 235);
+  border-bottom-color: rgb(37, 99, 235);
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.85rem;
+  border-radius: 9999px;
+  border: 1px solid rgb(209, 213, 219);
+  font-size: 0.875rem;
+  color: rgb(75, 85, 99);
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.filter-chip:hover {
+  background-color: rgb(229, 231, 235);
+}
+
+.filter-chip--active {
+  background-color: rgb(37, 99, 235);
+  border-color: rgb(37, 99, 235);
+  color: #fff;
+}
+
+@media (max-width: 640px) {
+  .login-page {
+    padding: 1.5rem 1rem;
+  }
+
+  .login-page::after {
+    background: rgba(255, 255, 255, 0.82);
+  }
+
+  .dashboard-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .dashboard-header button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .dashboard-tabs {
+    flex-direction: column;
+    gap: 0.75rem;
+    border-bottom: 0 !important;
+  }
+
+  .dashboard-tabs .tab-button {
+    width: 100%;
+    border: 1px solid rgb(229, 231, 235);
+    border-radius: 0.75rem;
+    padding: 0.65rem 1rem;
+  }
+
+  .dashboard-tabs .tab-button.tab-button--active {
+    border-color: rgb(22, 163, 74);
+    color: rgb(22, 163, 74);
+    box-shadow: 0 0 0 1px rgba(22, 163, 74, 0.15);
+  }
+
+  .dashboard-tabs #new-course-tab {
+    margin-left: 0;
+  }
+
+  .admin-tabs {
+    flex-direction: column;
+    gap: 0.5rem;
+    border-bottom: 0 !important;
+  }
+
+  .admin-tab {
+    width: 100%;
+    text-align: center;
+    border: 1px solid rgb(209, 213, 219);
+    border-radius: 9999px;
+    padding: 0.65rem 1rem;
+  }
+
+  .admin-tab--active {
+    border-color: rgb(37, 99, 235);
+    background-color: rgb(37, 99, 235);
+    color: #fff;
+  }
+
+  .table-wrapper {
+    overflow: visible;
+  }
+
+  .responsive-table,
+  .responsive-table thead,
+  .responsive-table tbody,
+  .responsive-table tr,
+  .responsive-table th,
+  .responsive-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .responsive-table thead {
+    display: none;
+  }
+
+  .responsive-table tbody {
+    display: block;
+  }
+
+  .responsive-table tr {
+    margin-bottom: 1rem;
+    border: 1px solid rgb(229, 231, 235);
+    border-radius: 0.75rem;
+    padding: 0.85rem 1rem;
+    background-color: #fff;
+    box-shadow: 0 20px 35px -24px rgba(15, 23, 42, 0.45);
+  }
+
+  .responsive-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.35rem 0 !important;
+    white-space: normal !important;
+    border: none;
+  }
+
+  .responsive-table td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: rgb(55, 65, 81);
+  }
+
+  .responsive-table td.actions-cell {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
+  .responsive-table td.actions-cell::before {
+    margin-right: 0;
+  }
+
+  .responsive-table td.actions-cell button {
+    margin-right: 0;
+  }
+
+  .responsive-table td.actions-cell .flex {
+    width: 100%;
+  }
+
+  .modal {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal__dialog {
+    max-width: 100%;
+    border-radius: 1.25rem 1.25rem 0 0;
+    animation: fadeInMobile 0.25s ease-out;
+  }
+
+  .photo-modal__dialog {
+    max-width: 100%;
+  }
+
+  #photo-modal .bg-gray-100 {
+    height: 12rem;
+  }
+
+  #photo-modal #photo-preview img,
+  #photo-modal #preview-img {
+    max-height: 12rem;
+  }
+
+  .fade-in,
+  .slide-in {
+    animation: fadeInMobile 0.25s ease-out;
+  }
+
+  .modal-actions {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .modal-actions > * {
+    width: 100%;
+    margin-left: 0 !important;
+  }
+
+  .form-actions {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .form-actions > * {
+    width: 100%;
+    margin-left: 0 !important;
+  }
+
+  .archive-actions {
+    flex-direction: column;
+    gap: 0.75rem;
+    align-items: stretch;
+  }
+
+  .archive-actions > * {
+    width: 100%;
+  }
+
+  .driver-card:hover,
+  .course-item:hover {
+    transform: none;
+    box-shadow: none;
+  }
+}
