@@ -119,8 +119,6 @@ const elements = {
   archivePeriodFilter: document.getElementById('archive-period-filter'),
   archiveFromInput: document.getElementById('archive-from'),
   archiveToInput: document.getElementById('archive-to'),
-  archiveApplyBtn: document.getElementById('archive-apply'),
-  archiveResetBtn: document.getElementById('archive-reset'),
   archiveList: document.getElementById('archive-list'),
   noArchive: document.getElementById('no-archive'),
 };
@@ -1019,33 +1017,7 @@ function handleArchiveDatesChange() {
   }
   state.archiveFilters.from = elements.archiveFromInput.value || null;
   state.archiveFilters.to = elements.archiveToInput.value || null;
-}
-
-function applyArchiveFilters() {
-  handleArchiveDatesChange();
   loadArchivedCourses();
-}
-
-function resetArchiveFilters() {
-  state.archiveFilters = {
-    driverId: 'all',
-    merchandise: 'all',
-    period: 'week',
-    from: null,
-    to: null,
-  };
-
-  if (elements.archiveDriverFilter) {
-    elements.archiveDriverFilter.value = 'all';
-  }
-  if (elements.archiveMerchandiseFilter) {
-    elements.archiveMerchandiseFilter.value = 'all';
-  }
-  if (elements.archivePeriodFilter) {
-    elements.archivePeriodFilter.value = 'week';
-  }
-  updateArchivePeriodInputs();
-  applyArchiveFilters();
 }
 
 function renderTodayCourses() {
@@ -1799,8 +1771,6 @@ function registerEventListeners() {
   elements.archiveMerchandiseFilter?.addEventListener('change', handleArchiveFiltersChange);
   elements.archiveFromInput?.addEventListener('change', handleArchiveDatesChange);
   elements.archiveToInput?.addEventListener('change', handleArchiveDatesChange);
-  elements.archiveApplyBtn?.addEventListener('click', applyArchiveFilters);
-  elements.archiveResetBtn?.addEventListener('click', resetArchiveFilters);
 
   window.addEventListener('click', (event) => {
     if (event.target === elements.courseModal) {
