@@ -1,0 +1,19 @@
+{
+  "name": "agri-holann-app",
+  "version": "1.0.0",
+  "description": "Application web Agri Holann avec backend Express et SQLite",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "init-db": "node scripts/init-db.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.0.0",
+    "bcryptjs": "^2.4.3",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}

@@ -25,6 +25,12 @@
 *.log
 *.sql
 *.sqlite
+node_modules/
+db/*.db
+.agri-holann/
+storage/*.db
+public_html/uploads/*
+!public_html/uploads/.gitkeep
 
 # OS generated files #
 ######################
