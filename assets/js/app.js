@@ -119,8 +119,6 @@ const elements = {
   archivePeriodFilter: document.getElementById('archive-period-filter'),
   archiveFromInput: document.getElementById('archive-from'),
   archiveToInput: document.getElementById('archive-to'),
-  archiveApplyBtn: document.getElementById('archive-apply'),
-  archiveResetBtn: document.getElementById('archive-reset'),
   archiveList: document.getElementById('archive-list'),
   noArchive: document.getElementById('no-archive'),
 };
@@ -951,16 +949,18 @@ function renderArchivedCourses() {
       const row = document.createElement('tr');
       row.className = 'hover:bg-gray-50';
       row.innerHTML = `
-        <td class="px-4 py-3 whitespace-nowrap">${course.date.toLocaleDateString('fr-FR')}</td>
-        <td class="px-4 py-3 whitespace-nowrap">${course.driverName || ''}</td>
-        <td class="px-4 py-3">
-          <div class="font-medium text-gray-800">${course.departure} → ${course.destination}</div>
-          <div class="text-xs text-gray-500 mt-1">${formatTime(course.date)}</div>
+        <td class="px-4 py-3 text-sm sm:whitespace-nowrap" data-label="Date">${course.date.toLocaleDateString('fr-FR')}</td>
+        <td class="px-4 py-3 text-sm" data-label="Chauffeur">${course.driverName || ''}</td>
+        <td class="px-4 py-3" data-label="Trajet">
+          <div class="flex-1">
+            <div class="font-medium text-gray-800">${course.departure} → ${course.destination}</div>
+            <div class="text-xs text-gray-500 mt-1">${formatTime(course.date)}</div>
+          </div>
         </td>
-        <td class="px-4 py-3 whitespace-nowrap">${course.merchandise || '—'}</td>
-        <td class="px-4 py-3 text-sm text-gray-500">${course.comments || ''}</td>
-        <td class="px-4 py-3 whitespace-nowrap">
-          <div class="flex flex-wrap gap-2">
+        <td class="px-4 py-3 text-sm" data-label="Marchandise">${course.merchandise || '—'}</td>
+        <td class="px-4 py-3 text-sm text-gray-600" data-label="Commentaires">${course.comments || '—'}</td>
+        <td class="px-4 py-3" data-label="Actions">
+          <div class="flex flex-wrap gap-2 sm:justify-end">
             <button type="button" class="btn-tertiary text-xs" data-action="restore">Restaurer</button>
             <button type="button" class="btn-danger text-xs" data-action="delete">Supprimer</button>
           </div>
@@ -1019,33 +1019,7 @@ function handleArchiveDatesChange() {
   }
   state.archiveFilters.from = elements.archiveFromInput.value || null;
   state.archiveFilters.to = elements.archiveToInput.value || null;
-}
-
-function applyArchiveFilters() {
-  handleArchiveDatesChange();
   loadArchivedCourses();
-}
-
-function resetArchiveFilters() {
-  state.archiveFilters = {
-    driverId: 'all',
-    merchandise: 'all',
-    period: 'week',
-    from: null,
-    to: null,
-  };
-
-  if (elements.archiveDriverFilter) {
-    elements.archiveDriverFilter.value = 'all';
-  }
-  if (elements.archiveMerchandiseFilter) {
-    elements.archiveMerchandiseFilter.value = 'all';
-  }
-  if (elements.archivePeriodFilter) {
-    elements.archivePeriodFilter.value = 'week';
-  }
-  updateArchivePeriodInputs();
-  applyArchiveFilters();
 }
 
 function renderTodayCourses() {
@@ -1132,11 +1106,11 @@ function renderWeekCourses() {
         : 'À faire';
 
       row.innerHTML = `
-        <td class="px-6 py-4 whitespace-nowrap">${formatDate(course.date)}</td>
-        <td class="px-6 py-4 whitespace-nowrap">${course.departure}</td>
-        <td class="px-6 py-4 whitespace-nowrap">${course.destination}</td>
-        <td class="px-6 py-4 whitespace-nowrap">${formatTime(course.date)}</td>
-        <td class="px-6 py-4 whitespace-nowrap">
+        <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Date">${formatDate(course.date)}</td>
+        <td class="px-6 py-4 text-sm" data-label="Départ">${course.departure}</td>
+        <td class="px-6 py-4 text-sm" data-label="Arrivée">${course.destination}</td>
+        <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Horaire">${formatTime(course.date)}</td>
+        <td class="px-6 py-4" data-label="Statut">
           <span class="px-2 py-1 text-xs rounded-full ${statusClass}">
             ${statusLabel}
           </span>
@@ -1171,26 +1145,28 @@ function renderAdminCourses() {
         course.status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
 
       row.innerHTML = `
-        <td class="px-6 py-4 whitespace-nowrap">${course.driverName || ''}</td>
-        <td class="px-6 py-4 whitespace-nowrap">${formatDate(course.date)}</td>
-        <td class="px-6 py-4 whitespace-nowrap">${course.departure}</td>
-        <td class="px-6 py-4 whitespace-nowrap">${course.destination}</td>
-        <td class="px-6 py-4 whitespace-nowrap">${formatTime(course.date)}</td>
-        <td class="px-6 py-4 whitespace-nowrap">
+        <td class="px-6 py-4 text-sm" data-label="Chauffeur">${course.driverName || ''}</td>
+        <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Date">${formatDate(course.date)}</td>
+        <td class="px-6 py-4 text-sm" data-label="Départ">${course.departure}</td>
+        <td class="px-6 py-4 text-sm" data-label="Arrivée">${course.destination}</td>
+        <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Horaire">${formatTime(course.date)}</td>
+        <td class="px-6 py-4" data-label="Statut">
           <span class="px-2 py-1 text-xs rounded-full ${statusClass}">
             ${course.status === 'completed' ? 'Terminé' : 'À faire'}
           </span>
         </td>
-        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-          <button class="text-amber-600 hover:text-amber-800 mr-2" data-action="archive" aria-label="Archiver la course">
-            <i class="fas fa-box-archive"></i>
-          </button>
-          <button class="text-blue-600 hover:text-blue-900 mr-2" data-action="edit" aria-label="Modifier la course">
-            <i class="fas fa-edit"></i>
-          </button>
-          <button class="text-red-600 hover:text-red-900" data-action="delete" aria-label="Supprimer la course">
-            <i class="fas fa-trash"></i>
-          </button>
+        <td class="px-6 py-4 text-sm font-medium sm:text-right" data-label="Actions">
+          <div class="flex flex-wrap gap-3 sm:justify-end">
+            <button class="text-amber-600 hover:text-amber-800" data-action="archive" aria-label="Archiver la course">
+              <i class="fas fa-box-archive"></i>
+            </button>
+            <button class="text-blue-600 hover:text-blue-900" data-action="edit" aria-label="Modifier la course">
+              <i class="fas fa-edit"></i>
+            </button>
+            <button class="text-red-600 hover:text-red-900" data-action="delete" aria-label="Supprimer la course">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>
         </td>
       `;
 
@@ -1799,8 +1775,6 @@ function registerEventListeners() {
   elements.archiveMerchandiseFilter?.addEventListener('change', handleArchiveFiltersChange);
   elements.archiveFromInput?.addEventListener('change', handleArchiveDatesChange);
   elements.archiveToInput?.addEventListener('change', handleArchiveDatesChange);
-  elements.archiveApplyBtn?.addEventListener('click', applyArchiveFilters);
-  elements.archiveResetBtn?.addEventListener('click', resetArchiveFilters);
 
   window.addEventListener('click', (event) => {
     if (event.target === elements.courseModal) {
