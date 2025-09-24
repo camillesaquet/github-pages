@@ -2,6 +2,29 @@
   animation: fadeIn 0.3s ease-in-out;
 }
 
+#login-page {
+  position: relative;
+  isolation: isolate;
+}
+
+#login-page::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("../images/login.png");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  filter: blur(6px);
+  transform: scale(1.05);
+  z-index: -1;
+}
+
+#login-page > * {
+  position: relative;
+  z-index: 1;
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;
