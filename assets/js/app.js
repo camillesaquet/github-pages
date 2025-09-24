@@ -25,6 +25,7 @@ const state = {
   currentCourseId: null,
   photoDataUrl: null,
   pendingCompletionComments: '',
+  emailSettings: null,
 };
 
 const elements = {
@@ -114,6 +115,15 @@ const elements = {
   adminArchivesTab: document.getElementById('admin-archives-tab'),
   adminPlanningView: document.getElementById('admin-planning-view'),
   adminArchiveView: document.getElementById('admin-archive-view'),
+  adminSettingsTab: document.getElementById('admin-settings-tab'),
+  adminSettingsView: document.getElementById('admin-settings-view'),
+  emailSettingsForm: document.getElementById('email-settings-form'),
+  emailSenderInput: document.getElementById('email-sender'),
+  emailRecipientInput: document.getElementById('email-recipient'),
+  gmailClientIdInput: document.getElementById('gmail-client-id'),
+  gmailClientSecretInput: document.getElementById('gmail-client-secret'),
+  gmailRefreshTokenInput: document.getElementById('gmail-refresh-token'),
+  emailSettingsFeedback: document.getElementById('email-settings-feedback'),
   archiveDriverFilter: document.getElementById('archive-driver-filter'),
   archiveMerchandiseFilter: document.getElementById('archive-merchandise-filter'),
   archivePeriodFilter: document.getElementById('archive-period-filter'),
@@ -122,6 +132,8 @@ const elements = {
   archiveList: document.getElementById('archive-list'),
   noArchive: document.getElementById('no-archive'),
 };
+
+let emailSettingsFeedbackTimeout = null;
 
 function showElement(element) {
   if (element) {
@@ -333,6 +345,7 @@ function setAdminSession(admin) {
   state.isAdmin = true;
   state.adminFilters = { driverId: 'all', range: 'week' };
   state.archiveFilters = { driverId: 'all', merchandise: 'all', period: 'week', from: null, to: null };
+  state.emailSettings = null;
   updateArchivePeriodInputs();
 
   hideElement(elements.loginPage);
@@ -516,6 +529,7 @@ function logout() {
   state.adminFilters = { driverId: 'all', range: 'week' };
   state.archiveFilters = { driverId: 'all', merchandise: 'all', period: 'week', from: null, to: null };
   state.activityLog = [];
+  state.emailSettings = null;
   state.courseCache.clear();
   elements.lastnameInput.value = '';
   elements.driverList.innerHTML = '';
@@ -581,28 +595,131 @@ function switchTab(tab) {
 function switchAdminView(view) {
   state.adminView = view;
 
-  if (!elements.adminPlanningView || !elements.adminArchiveView) {
+  const viewConfigs = [
+    { id: 'planning', tab: elements.adminPlanningTab, container: elements.adminPlanningView },
+    { id: 'archives', tab: elements.adminArchivesTab, container: elements.adminArchiveView },
+    { id: 'settings', tab: elements.adminSettingsTab, container: elements.adminSettingsView },
+  ];
+
+  const hasPlanningView = elements.adminPlanningView || elements.adminArchiveView || elements.adminSettingsView;
+  if (!hasPlanningView) {
     return;
   }
 
-  const planningActive = view === 'planning';
+  viewConfigs.forEach(({ id, tab, container }) => {
+    const isActive = view === id;
+    if (tab) {
+      tab.classList.toggle('admin-tab--active', isActive);
+    }
+    if (container) {
+      if (isActive) {
+        showElement(container);
+      } else {
+        hideElement(container);
+      }
+    }
+  });
 
-  if (planningActive) {
-    showElement(elements.adminPlanningView);
-    hideElement(elements.adminArchiveView);
-    elements.adminPlanningTab?.classList.add('admin-tab--active');
-    elements.adminArchivesTab?.classList.remove('admin-tab--active');
-  } else {
-    hideElement(elements.adminPlanningView);
-    showElement(elements.adminArchiveView);
-    elements.adminArchivesTab?.classList.add('admin-tab--active');
-    elements.adminPlanningTab?.classList.remove('admin-tab--active');
+  if (view === 'archives') {
     updateArchivePeriodInputs();
     if (!state.archivedCourses.length) {
       loadArchivedCourses();
     } else {
       renderArchivedCourses();
     }
+  } else if (view === 'settings') {
+    loadEmailSettings();
+  }
+}
+
+function populateEmailSettingsForm(settings) {
+  if (!elements.emailSettingsForm) {
+    return;
+  }
+
+  if (elements.emailSenderInput) {
+    elements.emailSenderInput.value = settings?.senderEmail || '';
+  }
+  if (elements.emailRecipientInput) {
+    elements.emailRecipientInput.value = settings?.recipientEmail || '';
+  }
+  if (elements.gmailClientIdInput) {
+    elements.gmailClientIdInput.value = settings?.gmailClientId || '';
+  }
+  if (elements.gmailClientSecretInput) {
+    elements.gmailClientSecretInput.value = settings?.gmailClientSecret || '';
+  }
+  if (elements.gmailRefreshTokenInput) {
+    elements.gmailRefreshTokenInput.value = settings?.gmailRefreshToken || '';
+  }
+}
+
+function showEmailSettingsFeedback(message, type = 'success') {
+  if (!elements.emailSettingsFeedback) {
+    return;
+  }
+
+  elements.emailSettingsFeedback.textContent = message;
+  elements.emailSettingsFeedback.classList.remove('hidden', 'text-green-600', 'text-red-600');
+  elements.emailSettingsFeedback.classList.add(type === 'error' ? 'text-red-600' : 'text-green-600');
+
+  if (emailSettingsFeedbackTimeout) {
+    clearTimeout(emailSettingsFeedbackTimeout);
+  }
+  emailSettingsFeedbackTimeout = setTimeout(() => {
+    elements.emailSettingsFeedback?.classList.add('hidden');
+  }, 5000);
+}
+
+async function loadEmailSettings(force = false) {
+  if (!elements.emailSettingsForm) {
+    return;
+  }
+
+  if (!force && state.emailSettings) {
+    populateEmailSettingsForm(state.emailSettings);
+    return;
+  }
+
+  try {
+    const settings = await apiFetch('/settings/email');
+    state.emailSettings = settings;
+    populateEmailSettingsForm(settings);
+  } catch (error) {
+    console.error('Erreur lors du chargement des paramètres email', error);
+    showEmailSettingsFeedback(
+      "Impossible de charger les paramètres email. Veuillez réessayer plus tard.",
+      'error'
+    );
+  }
+}
+
+async function handleEmailSettingsSubmit(event) {
+  event.preventDefault();
+
+  if (!elements.emailSettingsForm) {
+    return;
+  }
+
+  const payload = {
+    senderEmail: elements.emailSenderInput?.value.trim() || '',
+    recipientEmail: elements.emailRecipientInput?.value.trim() || '',
+    gmailClientId: elements.gmailClientIdInput?.value.trim() || '',
+    gmailClientSecret: elements.gmailClientSecretInput?.value.trim() || '',
+    gmailRefreshToken: elements.gmailRefreshTokenInput?.value.trim() || '',
+  };
+
+  try {
+    const updated = await apiFetch('/settings/email', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+    state.emailSettings = updated;
+    populateEmailSettingsForm(updated);
+    showEmailSettingsFeedback('Paramètres email enregistrés avec succès.');
+  } catch (error) {
+    console.error('Erreur lors de la sauvegarde des paramètres email', error);
+    showEmailSettingsFeedback(error.message || 'Enregistrement impossible.', 'error');
   }
 }
 
@@ -1762,11 +1879,13 @@ function registerEventListeners() {
 
   elements.adminPlanningTab?.addEventListener('click', () => switchAdminView('planning'));
   elements.adminArchivesTab?.addEventListener('click', () => switchAdminView('archives'));
+  elements.adminSettingsTab?.addEventListener('click', () => switchAdminView('settings'));
 
   elements.closeAdminLoginModalBtn?.addEventListener('click', closeAdminLoginModal);
   elements.adminLoginForm?.addEventListener('submit', handleAdminLogin);
   elements.adminCreateForm?.addEventListener('submit', handleAdminCreate);
   elements.driverManagementForm?.addEventListener('submit', handleAddDriver);
+  elements.emailSettingsForm?.addEventListener('submit', handleEmailSettingsSubmit);
   elements.adminCreateFirstName?.addEventListener('input', updateAdminIdentifierPreview);
   elements.adminCreateLastName?.addEventListener('input', updateAdminIdentifierPreview);
 

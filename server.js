@@ -3,6 +3,7 @@ const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
+const { OAuth2Client } = require('google-auth-library');
 const sqlite3 = require('sqlite3').verbose();
 const { open } = require('sqlite');
 const bcrypt = require('bcryptjs');
@@ -12,6 +13,14 @@ const PORT = process.env.PORT || 3000;
 const DB_PATH = path.join(__dirname, 'db', 'agriholann.db');
 const ATTACHMENTS_DIR = path.join(__dirname, 'storage', 'attachments');
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || 'admin';
+const DEFAULT_EMAIL_SETTINGS = {
+  sender: process.env.DEFAULT_EMAIL_SENDER || 'chauffeur.agriholann@gmail.com',
+  recipient: process.env.DEFAULT_EMAIL_RECIPIENT || 'laurent.saquet@agriholann.com',
+  gmailClientId:
+    process.env.GMAIL_CLIENT_ID || '417212111688-rjt64fo6qno57fmg37q6vupgjfetquqk.apps.googleusercontent.com',
+  gmailClientSecret: process.env.GMAIL_CLIENT_SECRET || '',
+  gmailRefreshToken: process.env.GMAIL_REFRESH_TOKEN || '',
+};
 
 async function hashPassword(password) {
   const value = password || '';
@@ -32,6 +41,8 @@ async function ensureDirectoryExists(dirPath) {
 }
 
 let db;
+let cachedEmailTransport = null;
+let cachedEmailTransportSignature = null;
 
 async function columnExists(table, column) {
   const pragma = await db.all(`PRAGMA table_info(${table})`);
@@ -42,6 +53,61 @@ async function ensureColumn(table, column, definition) {
   if (!(await columnExists(table, column))) {
     await db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
+}
+
+async function ensureDefaultSettings() {
+  const defaults = [
+    ['email.sender', DEFAULT_EMAIL_SETTINGS.sender],
+    ['email.recipient', DEFAULT_EMAIL_SETTINGS.recipient],
+    ['gmail.clientId', DEFAULT_EMAIL_SETTINGS.gmailClientId],
+    ['gmail.clientSecret', DEFAULT_EMAIL_SETTINGS.gmailClientSecret],
+    ['gmail.refreshToken', DEFAULT_EMAIL_SETTINGS.gmailRefreshToken],
+  ];
+
+  for (const [key, value] of defaults) {
+    if (value === undefined || value === null) {
+      continue;
+    }
+
+    const existing = await db.get('SELECT value FROM settings WHERE key = ?', [key]);
+    if (!existing) {
+      await db.run('INSERT INTO settings (key, value) VALUES (?, ?)', [key, value]);
+    }
+  }
+}
+
+async function getSetting(key, defaultValue = null) {
+  const row = await db.get('SELECT value FROM settings WHERE key = ?', [key]);
+  if (!row || row.value === undefined || row.value === null) {
+    return defaultValue;
+  }
+  return row.value;
+}
+
+async function setSetting(key, value) {
+  await db.run(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [key, value]
+  );
+}
+
+async function getEmailSettings() {
+  const [sender, recipient, gmailClientId, gmailClientSecret, gmailRefreshToken] = await Promise.all([
+    getSetting('email.sender', DEFAULT_EMAIL_SETTINGS.sender),
+    getSetting('email.recipient', DEFAULT_EMAIL_SETTINGS.recipient),
+    getSetting('gmail.clientId', DEFAULT_EMAIL_SETTINGS.gmailClientId || ''),
+    getSetting('gmail.clientSecret', DEFAULT_EMAIL_SETTINGS.gmailClientSecret || ''),
+    getSetting('gmail.refreshToken', DEFAULT_EMAIL_SETTINGS.gmailRefreshToken || ''),
+  ]);
+
+  return {
+    senderEmail: sender || '',
+    recipientEmail: recipient || '',
+    gmailClientId: gmailClientId || '',
+    gmailClientSecret: gmailClientSecret || '',
+    gmailRefreshToken: gmailRefreshToken || '',
+  };
 }
 
 function buildAdminIdentifier(firstName, lastName) {
@@ -149,12 +215,18 @@ async function initDatabase() {
     CREATE TABLE IF NOT EXISTS emails (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       course_id INTEGER,
+      from_address TEXT,
       to_address TEXT NOT NULL,
       subject TEXT NOT NULL,
       body TEXT NOT NULL,
       attachment_path TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
     );
 
     CREATE TABLE IF NOT EXISTS admins (
@@ -170,6 +242,9 @@ async function initDatabase() {
 
   await ensureColumn('courses', 'archived_at', 'TEXT');
   await ensureColumn('admins', 'password_hash', 'TEXT');
+  await ensureColumn('emails', 'from_address', 'TEXT');
+
+  await ensureDefaultSettings();
 
   const adminsWithoutPassword = await db.all(
     "SELECT id FROM admins WHERE password_hash IS NULL OR TRIM(password_hash) = ''"
@@ -301,6 +376,120 @@ function parseActivityDetails(details) {
   }
 }
 
+function isValidEmail(value) {
+  if (!value) {
+    return false;
+  }
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function escapeHtml(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildTransportSignature(settings) {
+  return JSON.stringify({
+    sender: settings.senderEmail || '',
+    clientId: settings.gmailClientId || '',
+    clientSecret: settings.gmailClientSecret || '',
+    refreshToken: settings.gmailRefreshToken || '',
+    smtpHost: process.env.SMTP_HOST || '',
+    smtpPort: process.env.SMTP_PORT || '',
+    smtpSecure: process.env.SMTP_SECURE || '',
+    smtpUser: process.env.SMTP_USER || '',
+  });
+}
+
+async function resolveAccessToken(settings) {
+  if (!settings.gmailClientId || !settings.gmailClientSecret || !settings.gmailRefreshToken) {
+    return null;
+  }
+
+  try {
+    const client = new OAuth2Client(settings.gmailClientId, settings.gmailClientSecret);
+    client.setCredentials({ refresh_token: settings.gmailRefreshToken });
+    const response = await client.getAccessToken();
+    if (!response) {
+      return null;
+    }
+    if (typeof response === 'string') {
+      return response;
+    }
+    return response.token || null;
+  } catch (error) {
+    console.error('Failed to retrieve Gmail access token', error);
+    return null;
+  }
+}
+
+async function getEmailTransport(settings) {
+  const signature = buildTransportSignature(settings);
+
+  if (cachedEmailTransport && cachedEmailTransportSignature === signature) {
+    return cachedEmailTransport;
+  }
+
+  if (
+    settings.senderEmail &&
+    settings.gmailClientId &&
+    settings.gmailClientSecret &&
+    settings.gmailRefreshToken
+  ) {
+    const accessToken = await resolveAccessToken(settings);
+
+    if (accessToken) {
+      cachedEmailTransport = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          type: 'OAuth2',
+          user: settings.senderEmail,
+          clientId: settings.gmailClientId,
+          clientSecret: settings.gmailClientSecret,
+          refreshToken: settings.gmailRefreshToken,
+          accessToken,
+        },
+      });
+      cachedEmailTransportSignature = signature;
+      return cachedEmailTransport;
+    }
+  }
+
+  const smtpHost = process.env.SMTP_HOST;
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+
+  if (smtpHost && smtpUser && smtpPass) {
+    cachedEmailTransport = nodemailer.createTransport({
+      host: smtpHost,
+      port: Number(process.env.SMTP_PORT) || 587,
+      secure: process.env.SMTP_SECURE === 'true',
+      auth: {
+        user: smtpUser,
+        pass: smtpPass,
+      },
+    });
+    cachedEmailTransportSignature = signature;
+    return cachedEmailTransport;
+  }
+
+  cachedEmailTransport = nodemailer.createTransport({
+    streamTransport: true,
+    newline: 'unix',
+    buffer: true,
+  });
+  cachedEmailTransportSignature = signature;
+  return cachedEmailTransport;
+}
+
 async function logActivity(courseId, action, user, details = null) {
   const timestamp = new Date().toISOString();
   await db.run(
@@ -350,13 +539,15 @@ async function mergeCreationAndCompletionActivity(courseId, completionUser, comp
   );
 }
 
-const emailTransport = nodemailer.createTransport({
-  streamTransport: true,
-  newline: 'unix',
-  buffer: true,
-});
-
-async function recordEmail(courseId, to, subject, body, attachmentBuffer, attachmentName = 'bon-transport.jpg') {
+async function recordEmail(
+  courseId,
+  fromAddress,
+  to,
+  subject,
+  body,
+  attachmentBuffer,
+  attachmentName = 'bon-transport.jpg'
+) {
   const createdAt = new Date().toISOString();
   let attachmentPath = null;
 
@@ -366,17 +557,116 @@ async function recordEmail(courseId, to, subject, body, attachmentBuffer, attach
   }
 
   await db.run(
-    'INSERT INTO emails (course_id, to_address, subject, body, attachment_path, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    [courseId, to, subject, body, attachmentPath, createdAt]
+    `INSERT INTO emails (course_id, from_address, to_address, subject, body, attachment_path, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [courseId, fromAddress || null, to, subject, body, attachmentPath, createdAt]
   );
 }
 
 async function sendCompletionEmail(course, driver, completionComments, photoDataUrl) {
-  const to = 'laurent.saquet@agriholann.com';
-  const subject = `[Livraison] ${driver.first_name} ${driver.last_name} - ${course.destination}`;
-  const body = `Le chauffeur ${driver.first_name} ${driver.last_name} a effectué sa course du ${new Date(
-    course.date_time
-  ).toLocaleString('fr-FR')}\n\nCommentaires: ${completionComments || 'Aucun commentaire'}`;
+  const settings = await getEmailSettings();
+  const to = (settings.recipientEmail || DEFAULT_EMAIL_SETTINGS.recipient || '').trim();
+
+  if (!to) {
+    console.warn('No recipient email configured. Skipping email delivery.');
+    return { to: null, subject: null, body: null };
+  }
+
+  const from = (settings.senderEmail || DEFAULT_EMAIL_SETTINGS.sender || 'no-reply@agriholann.com').trim();
+  const driverName = `${driver.first_name || ''} ${driver.last_name || ''}`.trim() || 'Chauffeur';
+  const departureDate = new Date(course.date_time);
+  const departureDateLabel = departureDate.toLocaleDateString('fr-FR', {
+    dateStyle: 'full',
+  });
+  const departureTimeLabel = departureDate.toLocaleTimeString('fr-FR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const completionDateLabel = new Date().toLocaleString('fr-FR', {
+    dateStyle: 'full',
+    timeStyle: 'short',
+  });
+
+  const merchandise = course.merchandise || 'Non renseignée';
+  const planningComments = course.comments || 'Aucun';
+  const completionNotes = completionComments || 'Aucun';
+
+  const subject = `[Course terminée] ${driverName} - ${course.departure || 'Départ'} ➜ ${
+    course.destination || 'Arrivée'
+  }`;
+
+  const textLines = [
+    'Course terminée',
+    `Identifiant course : ${course.id || 'N/A'}`,
+    `Chauffeur : ${driverName}`,
+    `Départ : ${course.departure || 'Non renseigné'}`,
+    `Arrivée : ${course.destination || 'Non renseignée'}`,
+    `Date : ${departureDateLabel} à ${departureTimeLabel}`,
+    `Validation : ${completionDateLabel}`,
+    `Marchandise : ${merchandise}`,
+    `Commentaires planification : ${planningComments}`,
+    `Commentaires de fin de course : ${completionNotes}`,
+  ];
+
+  if (photoDataUrl) {
+    textLines.push('Le bon de transport est joint en pièce jointe.');
+  }
+
+  const textBody = textLines.join('\n');
+
+  const htmlBody = `
+    <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.5;">
+      <h2 style="color: #2563eb; font-size: 20px; margin-bottom: 16px;">Course terminée</h2>
+      <p style="margin: 0 0 16px 0;">Le chauffeur <strong>${escapeHtml(driverName)}</strong> a validé la course suivante :</p>
+      <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
+        <tbody>
+          <tr>
+            <td style="padding: 8px 12px; background-color: #f3f4f6; font-weight: 600; width: 40%;">Identifiant</td>
+            <td style="padding: 8px 12px;">${escapeHtml(course.id || 'N/A')}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 12px; background-color: #f9fafb; font-weight: 600;">Date &amp; heure</td>
+            <td style="padding: 8px 12px;">${escapeHtml(
+              `${departureDateLabel} à ${departureTimeLabel}`
+            )}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 12px; background-color: #f3f4f6; font-weight: 600;">Départ</td>
+            <td style="padding: 8px 12px;">${escapeHtml(course.departure || 'Non renseigné')}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 12px; background-color: #f9fafb; font-weight: 600;">Arrivée</td>
+            <td style="padding: 8px 12px;">${escapeHtml(course.destination || 'Non renseignée')}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 12px; background-color: #f3f4f6; font-weight: 600;">Marchandise</td>
+            <td style="padding: 8px 12px;">${escapeHtml(merchandise)}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 12px; background-color: #f9fafb; font-weight: 600;">Validation</td>
+            <td style="padding: 8px 12px;">${escapeHtml(completionDateLabel)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="margin-bottom: 12px;">
+        <h3 style="font-size: 16px; margin: 0 0 4px 0; color: #111827;">Commentaires planification</h3>
+        <p style="margin: 0; background-color: #f9fafb; padding: 12px; border-radius: 8px;">${escapeHtml(
+          planningComments
+        )}</p>
+      </div>
+      <div style="margin-bottom: 12px;">
+        <h3 style="font-size: 16px; margin: 0 0 4px 0; color: #111827;">Commentaires de fin de course</h3>
+        <p style="margin: 0; background-color: #f3f4f6; padding: 12px; border-radius: 8px;">${escapeHtml(
+          completionNotes
+        )}</p>
+      </div>
+      <p style="margin: 16px 0 0 0; font-size: 14px; color: #4b5563;">
+        ${photoDataUrl
+          ? 'Le bon de transport est disponible en pièce jointe.'
+          : "Aucune image de bon de transport n'a été fournie."}
+      </p>
+    </div>
+  `;
 
   let attachmentBuffer = null;
   if (photoDataUrl && photoDataUrl.startsWith('data:image')) {
@@ -384,30 +674,88 @@ async function sendCompletionEmail(course, driver, completionComments, photoData
     attachmentBuffer = Buffer.from(base64Data, 'base64');
   }
 
-  await recordEmail(course.id, to, subject, body, attachmentBuffer);
+  await recordEmail(course.id, from, to, subject, textBody, attachmentBuffer);
 
-  await emailTransport.sendMail({
-    from: 'no-reply@agriholann.com',
+  const transport = await getEmailTransport(settings);
+
+  await transport.sendMail({
+    from,
     to,
     subject,
-    text: body,
-    attachments: attachmentBuffer
-      ? [
-          {
-            filename: 'bon-transport.jpg',
-            content: attachmentBuffer,
-          },
-        ]
-      : [],
+    text: textBody,
+    html: htmlBody,
+    attachments:
+      attachmentBuffer
+        ? [
+            {
+              filename: 'bon-transport.jpg',
+              content: attachmentBuffer,
+            },
+          ]
+        : [],
   });
 
-  return { to, subject, body };
+  return { to, subject, body: textBody, html: htmlBody };
 }
 
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname)));
+
+app.get('/api/settings/email', async (req, res) => {
+  try {
+    const settings = await getEmailSettings();
+    res.json(settings);
+  } catch (error) {
+    console.error('Error fetching email settings', error);
+    res.status(500).json({ message: 'Erreur lors de la récupération des paramètres email' });
+  }
+});
+
+app.put('/api/settings/email', async (req, res) => {
+  try {
+    const {
+      senderEmail = '',
+      recipientEmail = '',
+      gmailClientId = '',
+      gmailClientSecret = '',
+      gmailRefreshToken = '',
+    } = req.body || {};
+
+    const sanitizedRecipient = recipientEmail.trim();
+    const sanitizedSender = senderEmail.trim();
+
+    if (!isValidEmail(sanitizedRecipient)) {
+      return res
+        .status(400)
+        .json({ message: "Veuillez renseigner une adresse email de réception valide." });
+    }
+
+    if (sanitizedSender && !isValidEmail(sanitizedSender)) {
+      return res
+        .status(400)
+        .json({ message: "Veuillez renseigner une adresse email d'envoi valide." });
+    }
+
+    await setSetting('email.sender', sanitizedSender);
+    await setSetting('email.recipient', sanitizedRecipient);
+    await setSetting('gmail.clientId', gmailClientId.trim());
+    await setSetting('gmail.clientSecret', gmailClientSecret.trim());
+    await setSetting('gmail.refreshToken', gmailRefreshToken.trim());
+
+    cachedEmailTransport = null;
+    cachedEmailTransportSignature = null;
+
+    const settings = await getEmailSettings();
+    res.json(settings);
+  } catch (error) {
+    console.error('Error updating email settings', error);
+    res
+      .status(500)
+      .json({ message: 'Erreur lors de la mise à jour des paramètres email' });
+  }
+});
 
 app.get('/api/drivers', async (req, res) => {
   try {
