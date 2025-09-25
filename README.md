@@ -48,10 +48,13 @@ L'application utilise l'API Gmail en OAuth2. Avant de lancer le serveur, défini
 | `DEFAULT_COMPLETION_EMAIL` | Adresse de réception par défaut des comptes rendus de courses. |
 
 À défaut de variables d'environnement, le serveur tente automatiquement de charger les identifiants
-depuis des fichiers placés à la racine du projet :
+depuis des fichiers placés à la racine du projet (dans le même dossier que `server.js`) :
 
-- `credentials.json` contenant la configuration OAuth (clé `web` ou `installed`).
-- `token.json` contenant un champ `refresh_token` valide.
+- `credentials.json` contenant la configuration OAuth (clé `web` ou `installed`, champs `client_id`, `client_secret` et `redirect_uris` ou `redirect_uri`).
+- `token.json` contenant un champ `refresh_token` (le format `refreshToken` est également accepté).
+
+Les fichiers sont relus à chaque tentative d'envoi : vous pouvez donc les ajouter ou les remplacer sans
+redémarrer l'application, l'API Gmail sera automatiquement reconfigurée.
 
 Vous pouvez générer ce fichier `token.json` automatiquement à partir d'un refresh token existant :
 

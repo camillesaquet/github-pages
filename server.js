@@ -13,52 +13,58 @@ const DB_PATH = path.join(__dirname, 'db', 'agriholann.db');
 const ATTACHMENTS_DIR = path.join(__dirname, 'storage', 'attachments');
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || 'admin';
 const DEFAULT_COMPLETION_EMAIL = process.env.DEFAULT_COMPLETION_EMAIL || 'laurent.saquet@agriholann.com';
+const DEFAULT_GMAIL_REDIRECT_URI = 'http://localhost';
+const GMAIL_SENDER = process.env.GMAIL_SENDER || 'chauffeur.agriholann@gmail.com';
+const GMAIL_CONFIG_SOURCES = {
+  credentialsPath: process.env.GMAIL_CREDENTIALS_PATH || path.join(__dirname, 'credentials.json'),
+  tokenPath: process.env.GMAIL_TOKEN_PATH || path.join(__dirname, 'token.json'),
+};
+
+function applyFallback(config, key, value) {
+  if (!config[key] && typeof value === 'string' && value.trim()) {
+    config[key] = value.trim();
+  }
+}
 
 function loadGmailConfig() {
   const config = {
-    clientId: '',
-    clientSecret: '',
-    redirectUri: '',
-    refreshToken: '',
+    clientId: (process.env.GMAIL_CLIENT_ID || '').trim(),
+    clientSecret: (process.env.GMAIL_CLIENT_SECRET || '').trim(),
+    redirectUri: (process.env.GMAIL_REDIRECT_URI || '').trim(),
+    refreshToken: (process.env.GMAIL_REFRESH_TOKEN || '').trim(),
   };
 
-  const credentialsPath = process.env.GMAIL_CREDENTIALS_PATH || path.join(__dirname, 'credentials.json');
-  const tokenPath = process.env.GMAIL_TOKEN_PATH || path.join(__dirname, 'token.json');
-
-  if (fs.existsSync(credentialsPath)) {
+  if (fs.existsSync(GMAIL_CONFIG_SOURCES.credentialsPath)) {
     try {
-      const rawCredentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
+      const rawCredentials = JSON.parse(fs.readFileSync(GMAIL_CONFIG_SOURCES.credentialsPath, 'utf8'));
       const oauthConfig = rawCredentials.web || rawCredentials.installed || {};
-      config.clientId = oauthConfig.client_id || config.clientId;
-      config.clientSecret = oauthConfig.client_secret || config.clientSecret;
+      applyFallback(config, 'clientId', oauthConfig.client_id);
+      applyFallback(config, 'clientSecret', oauthConfig.client_secret);
       if (Array.isArray(oauthConfig.redirect_uris) && oauthConfig.redirect_uris.length > 0) {
-        config.redirectUri = oauthConfig.redirect_uris[0];
+        applyFallback(config, 'redirectUri', oauthConfig.redirect_uris[0]);
+      } else if (typeof oauthConfig.redirect_uri === 'string') {
+        applyFallback(config, 'redirectUri', oauthConfig.redirect_uri);
       }
     } catch (error) {
       console.error('Impossible de lire credentials.json :', error.message);
     }
   }
 
-  if (fs.existsSync(tokenPath)) {
+  if (fs.existsSync(GMAIL_CONFIG_SOURCES.tokenPath)) {
     try {
-      const token = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
-      config.refreshToken = token.refresh_token || config.refreshToken;
+      const token = JSON.parse(fs.readFileSync(GMAIL_CONFIG_SOURCES.tokenPath, 'utf8'));
+      applyFallback(config, 'refreshToken', token.refresh_token || token.refreshToken);
     } catch (error) {
       console.error('Impossible de lire token.json :', error.message);
     }
   }
 
+  if (!config.redirectUri) {
+    config.redirectUri = DEFAULT_GMAIL_REDIRECT_URI;
+  }
+
   return config;
 }
-
-const gmailFileConfig = loadGmailConfig();
-
-const GMAIL_CLIENT_ID = process.env.GMAIL_CLIENT_ID || gmailFileConfig.clientId || '';
-const GMAIL_CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET || gmailFileConfig.clientSecret || '';
-const GMAIL_REDIRECT_URI =
-  process.env.GMAIL_REDIRECT_URI || gmailFileConfig.redirectUri || 'http://localhost';
-const GMAIL_REFRESH_TOKEN = process.env.GMAIL_REFRESH_TOKEN || gmailFileConfig.refreshToken || '';
-const GMAIL_SENDER = process.env.GMAIL_SENDER || 'chauffeur.agriholann@gmail.com';
 const EMAIL_RECIPIENT_SETTING_KEY = 'completion_email_recipient';
 const EMAIL_ATTACHMENT_NAME = 'bon-transport.jpg';
 
@@ -83,6 +89,7 @@ async function ensureDirectoryExists(dirPath) {
 let db;
 
 let gmailService = null;
+let gmailConfigSignature = null;
 
 async function columnExists(table, column) {
   const pragma = await db.all(`PRAGMA table_info(${table})`);
@@ -115,17 +122,23 @@ async function getCompletionEmailRecipient() {
 }
 
 function getGmailService() {
-  if (!GMAIL_CLIENT_ID || !GMAIL_CLIENT_SECRET || !GMAIL_REFRESH_TOKEN) {
-    return null;
+  const config = loadGmailConfig();
+  const signature = JSON.stringify(config);
+
+  if (!config.clientId || !config.clientSecret || !config.refreshToken) {
+    gmailService = null;
+    gmailConfigSignature = null;
+    return { service: null, config };
   }
 
-  if (!gmailService) {
-    const oAuth2Client = new google.auth.OAuth2(GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REDIRECT_URI);
-    oAuth2Client.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
+  if (!gmailService || gmailConfigSignature !== signature) {
+    const oAuth2Client = new google.auth.OAuth2(config.clientId, config.clientSecret, config.redirectUri);
+    oAuth2Client.setCredentials({ refresh_token: config.refreshToken });
     gmailService = google.gmail({ version: 'v1', auth: oAuth2Client });
+    gmailConfigSignature = signature;
   }
 
-  return gmailService;
+  return { service: gmailService, config };
 }
 
 function buildMimeMessage({ from, to, subject, text, attachmentBuffer, attachmentName, attachmentMimeType }) {
@@ -180,11 +193,17 @@ async function sendGmailMessage({
   attachmentName = EMAIL_ATTACHMENT_NAME,
   attachmentMimeType = 'application/octet-stream',
 }) {
-  const service = getGmailService();
+  const { service, config } = getGmailService();
 
   if (!service) {
+    const missing = [];
+    if (!config.clientId) missing.push('client_id');
+    if (!config.clientSecret) missing.push('client_secret');
+    if (!config.refreshToken) missing.push('refresh_token');
+    const missingDetails = missing.length ? ` (éléments manquants : ${missing.join(', ')})` : '';
+    const locationHint = ` Fichiers recherchés : ${GMAIL_CONFIG_SOURCES.credentialsPath}, ${GMAIL_CONFIG_SOURCES.tokenPath}.`;
     throw new Error(
-      'Configuration de la messagerie Gmail manquante. Définissez les variables GMAIL_* ou fournissez credentials.json et token.json.'
+      `Configuration de la messagerie Gmail manquante. Définissez les variables GMAIL_* ou fournissez credentials.json et token.json${missingDetails}.${locationHint}`
     );
   }
 
