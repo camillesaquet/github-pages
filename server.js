@@ -6,12 +6,20 @@ const { google } = require('googleapis');
 const sqlite3 = require('sqlite3').verbose();
 const { open } = require('sqlite');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DB_PATH = path.join(__dirname, 'db', 'agriholann.db');
 const ATTACHMENTS_DIR = path.join(__dirname, 'storage', 'attachments');
-const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || 'admin';
+const FALLBACK_ADMIN_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || 'admin';
+const SUPER_ADMIN_DEFAULT_PASSWORD = process.env.SUPER_ADMIN_DEFAULT_PASSWORD || 'lannion';
+const SUPER_ADMIN_IDENTIFIER = 'lsaquet';
+const SUPER_ADMIN_FIRST_NAME = 'Laurent';
+const SUPER_ADMIN_LAST_NAME = 'Saquet';
+const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const ADMIN_CREATABLE_ROLES = ['manager', 'standard'];
+const ADMIN_ROLES = new Set(['superadmin', ...ADMIN_CREATABLE_ROLES]);
 const DEFAULT_COMPLETION_EMAIL = process.env.DEFAULT_COMPLETION_EMAIL || 'laurent.saquet@agriholann.com';
 const DEFAULT_GMAIL_REDIRECT_URI = 'http://localhost';
 const GMAIL_SENDER = process.env.GMAIL_SENDER || 'chauffeur.agriholann@gmail.com';
@@ -84,6 +92,72 @@ function loadGmailConfig() {
 }
 const EMAIL_RECIPIENT_SETTING_KEY = 'completion_email_recipient';
 const EMAIL_ATTACHMENT_NAME = 'bon-transport.jpg';
+
+const activeAdminSessions = new Map();
+
+function generateAdminSessionToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+function createAdminSession(admin) {
+  const token = generateAdminSessionToken();
+  activeAdminSessions.set(token, {
+    adminId: admin.id,
+    expiresAt: Date.now() + ADMIN_SESSION_TTL_MS,
+  });
+  return token;
+}
+
+async function enforceAdminSession(req, res, options = {}) {
+  const token = req.headers['x-admin-token'];
+  if (!token) {
+    res.status(401).json({ message: 'Authentification administrateur requise.' });
+    return null;
+  }
+
+  const session = activeAdminSessions.get(token);
+  if (!session) {
+    res.status(401).json({ message: 'Session administrateur invalide.' });
+    return null;
+  }
+
+  if (session.expiresAt <= Date.now()) {
+    activeAdminSessions.delete(token);
+    res.status(401).json({ message: 'Session administrateur expirée.' });
+    return null;
+  }
+
+  const admin = await db.get(
+    'SELECT id, first_name, last_name, identifier, initials, role FROM admins WHERE id = ?',
+    [session.adminId]
+  );
+
+  if (!admin) {
+    activeAdminSessions.delete(token);
+    res.status(401).json({ message: 'Compte administrateur introuvable.' });
+    return null;
+  }
+
+  if (options.requireSuperAdmin && admin.identifier.toLowerCase() !== SUPER_ADMIN_IDENTIFIER) {
+    res.status(403).json({ message: 'Seul Laurent Saquet peut effectuer cette action.' });
+    return null;
+  }
+
+  if (options.allowSelfOnly && admin.id !== options.allowSelfOnly) {
+    res.status(403).json({ message: 'Action non autorisée pour ce compte administrateur.' });
+    return null;
+  }
+
+  if (options.allowRoles && !options.allowRoles.includes(admin.role)) {
+    res.status(403).json({ message: 'Droits administrateur insuffisants pour cette action.' });
+    return null;
+  }
+
+  session.expiresAt = Date.now() + ADMIN_SESSION_TTL_MS;
+  activeAdminSessions.set(token, session);
+
+  return { admin, token };
+}
 
 async function hashPassword(password) {
   const value = password || '';
@@ -389,24 +463,70 @@ async function generateUniqueAdminIdentifier(firstName, lastName) {
   }
 }
 
-async function ensureDefaultAdmin() {
-  const existing = await db.get('SELECT COUNT(*) as count FROM admins');
-  if (existing.count > 0) {
+async function ensureSuperAdmin() {
+  let admin = await db.get('SELECT * FROM admins WHERE LOWER(identifier) = ?', [SUPER_ADMIN_IDENTIFIER]);
+
+  const expectedInitials = buildAdminInitials(SUPER_ADMIN_FIRST_NAME, SUPER_ADMIN_LAST_NAME);
+
+  if (!admin) {
+    const identifier = SUPER_ADMIN_IDENTIFIER;
+    const initials = expectedInitials;
+    const createdAt = new Date().toISOString();
+    const passwordHash = await hashPassword(SUPER_ADMIN_DEFAULT_PASSWORD);
+
+    await db.run(
+      `INSERT INTO admins (first_name, last_name, identifier, initials, created_at, password_hash, role)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        SUPER_ADMIN_FIRST_NAME,
+        SUPER_ADMIN_LAST_NAME,
+        identifier,
+        initials,
+        createdAt,
+        passwordHash,
+        'superadmin',
+      ]
+    );
     return;
   }
 
-  const firstName = 'Laurent';
-  const lastName = 'Saquet';
-  const identifier = await generateUniqueAdminIdentifier(firstName, lastName);
-  const initials = buildAdminInitials(firstName, lastName);
-  const createdAt = new Date().toISOString();
-  const passwordHash = await hashPassword(DEFAULT_ADMIN_PASSWORD);
+  const updates = [];
+  const params = [];
 
-  await db.run(
-    `INSERT INTO admins (first_name, last_name, identifier, initials, created_at, password_hash)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [firstName, lastName, identifier, initials, createdAt, passwordHash]
-  );
+  if (admin.first_name !== SUPER_ADMIN_FIRST_NAME) {
+    updates.push('first_name = ?');
+    params.push(SUPER_ADMIN_FIRST_NAME);
+  }
+
+  if (admin.last_name !== SUPER_ADMIN_LAST_NAME) {
+    updates.push('last_name = ?');
+    params.push(SUPER_ADMIN_LAST_NAME);
+  }
+
+  if (admin.initials !== expectedInitials) {
+    updates.push('initials = ?');
+    params.push(expectedInitials);
+  }
+
+  if (admin.identifier.toLowerCase() !== SUPER_ADMIN_IDENTIFIER) {
+    updates.push('identifier = ?');
+    params.push(SUPER_ADMIN_IDENTIFIER);
+  }
+
+  if (!admin.password_hash || !admin.password_hash.trim()) {
+    updates.push('password_hash = ?');
+    params.push(await hashPassword(SUPER_ADMIN_DEFAULT_PASSWORD));
+  }
+
+  if (admin.role !== 'superadmin') {
+    updates.push("role = 'superadmin'");
+  }
+
+  if (updates.length) {
+    const setClause = updates.join(', ');
+    params.push(admin.id);
+    await db.run(`UPDATE admins SET ${setClause} WHERE id = ?`, params);
+  }
 }
 
 async function ensureDefaultEmailRecipient() {
@@ -430,7 +550,8 @@ async function initDatabase() {
       first_name TEXT NOT NULL,
       last_name TEXT NOT NULL,
       email TEXT,
-      phone TEXT
+      phone TEXT,
+      password_hash TEXT
     );
 
     CREATE TABLE IF NOT EXISTS courses (
@@ -478,7 +599,8 @@ async function initDatabase() {
       identifier TEXT NOT NULL UNIQUE,
       initials TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      password_hash TEXT
+      password_hash TEXT,
+      role TEXT NOT NULL DEFAULT 'standard'
     );
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -489,18 +611,22 @@ async function initDatabase() {
 
   await ensureColumn('courses', 'archived_at', 'TEXT');
   await ensureColumn('admins', 'password_hash', 'TEXT');
+  await ensureColumn("admins", 'role', "TEXT NOT NULL DEFAULT 'standard'");
+  await ensureColumn('drivers', 'password_hash', 'TEXT');
 
   const adminsWithoutPassword = await db.all(
     "SELECT id FROM admins WHERE password_hash IS NULL OR TRIM(password_hash) = ''"
   );
 
   if (adminsWithoutPassword.length) {
-    const fallbackHash = await hashPassword(DEFAULT_ADMIN_PASSWORD);
+    const fallbackHash = await hashPassword(FALLBACK_ADMIN_PASSWORD);
     const updatePromises = adminsWithoutPassword.map((admin) =>
       db.run('UPDATE admins SET password_hash = ? WHERE id = ?', [fallbackHash, admin.id])
     );
     await Promise.all(updatePromises);
   }
+
+  await db.run("UPDATE admins SET role = 'standard' WHERE role IS NULL OR TRIM(role) = ''");
 
   const driverCount = await db.get('SELECT COUNT(*) as count FROM drivers');
   if (driverCount.count === 0) {
@@ -588,7 +714,7 @@ async function initDatabase() {
     }
   }
 
-  await ensureDefaultAdmin();
+  await ensureSuperAdmin();
   await ensureDefaultEmailRecipient();
   await ensureDefaultGmailSettings();
 }
@@ -763,7 +889,8 @@ app.use(express.static(path.join(__dirname)));
 app.get('/api/drivers', async (req, res) => {
   try {
     const { search } = req.query;
-    let query = 'SELECT id, first_name, last_name, email, phone FROM drivers';
+    let query =
+      "SELECT id, first_name, last_name, email, phone, CASE WHEN password_hash IS NULL OR TRIM(password_hash) = '' THEN 0 ELSE 1 END AS has_password FROM drivers";
     const params = [];
 
     if (search) {
@@ -784,6 +911,13 @@ app.get('/api/drivers', async (req, res) => {
 
 app.post('/api/drivers', async (req, res) => {
   try {
+    const sessionInfo = await enforceAdminSession(req, res, {
+      allowRoles: Array.from(ADMIN_ROLES),
+    });
+    if (!sessionInfo) {
+      return;
+    }
+
     const { firstName, lastName, email, phone } = req.body;
 
     if (!firstName || !lastName) {
@@ -805,6 +939,13 @@ app.post('/api/drivers', async (req, res) => {
 
 app.delete('/api/drivers/:id', async (req, res) => {
   try {
+    const sessionInfo = await enforceAdminSession(req, res, {
+      allowRoles: Array.from(ADMIN_ROLES),
+    });
+    if (!sessionInfo) {
+      return;
+    }
+
     const driverId = req.params.id;
     const driver = await db.get('SELECT * FROM drivers WHERE id = ?', [driverId]);
 
@@ -823,7 +964,7 @@ app.delete('/api/drivers/:id', async (req, res) => {
 app.get('/api/admins', async (req, res) => {
   try {
     const rows = await db.all(
-      `SELECT id, first_name, last_name, identifier, initials, created_at FROM admins ORDER BY last_name ASC, first_name ASC`
+      `SELECT id, first_name, last_name, identifier, initials, created_at, role FROM admins ORDER BY last_name ASC, first_name ASC`
     );
 
     res.json(
@@ -834,6 +975,7 @@ app.get('/api/admins', async (req, res) => {
         identifier: admin.identifier,
         initials: admin.initials,
         createdAt: admin.created_at,
+        role: admin.role,
       }))
     );
   } catch (error) {
@@ -844,7 +986,12 @@ app.get('/api/admins', async (req, res) => {
 
 app.post('/api/admins', async (req, res) => {
   try {
-    const { firstName, lastName, password } = req.body;
+    const sessionInfo = await enforceAdminSession(req, res, { requireSuperAdmin: true });
+    if (!sessionInfo) {
+      return;
+    }
+
+    const { firstName, lastName, password, role } = req.body || {};
 
     if (!firstName || !lastName) {
       return res.status(400).json({ message: 'Le prénom et le nom sont obligatoires.' });
@@ -852,6 +999,12 @@ app.post('/api/admins', async (req, res) => {
 
     if (!password) {
       return res.status(400).json({ message: 'Le mot de passe administrateur est obligatoire.' });
+    }
+
+    const normalizedRole = typeof role === 'string' ? role.trim().toLowerCase() : 'standard';
+
+    if (!ADMIN_CREATABLE_ROLES.includes(normalizedRole)) {
+      return res.status(400).json({ message: 'Niveau administrateur invalide.' });
     }
 
     const identifier = await generateUniqueAdminIdentifier(firstName, lastName);
@@ -864,14 +1017,15 @@ app.post('/api/admins', async (req, res) => {
     const passwordHash = await hashPassword(password);
 
     const result = await db.run(
-      `INSERT INTO admins (first_name, last_name, identifier, initials, created_at, password_hash)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [firstName.trim(), lastName.trim(), identifier, initials, createdAt, passwordHash]
+      `INSERT INTO admins (first_name, last_name, identifier, initials, created_at, password_hash, role)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [firstName.trim(), lastName.trim(), identifier, initials, createdAt, passwordHash, normalizedRole]
     );
 
-    const admin = await db.get('SELECT id, first_name, last_name, identifier, initials, created_at FROM admins WHERE id = ?', [
-      result.lastID,
-    ]);
+    const admin = await db.get(
+      'SELECT id, first_name, last_name, identifier, initials, created_at, role FROM admins WHERE id = ?',
+      [result.lastID]
+    );
 
     res.status(201).json({
       id: admin.id,
@@ -880,6 +1034,7 @@ app.post('/api/admins', async (req, res) => {
       identifier: admin.identifier,
       initials: admin.initials,
       createdAt: admin.created_at,
+      role: admin.role,
     });
   } catch (error) {
     console.error('Error creating admin', error);
@@ -887,8 +1042,89 @@ app.post('/api/admins', async (req, res) => {
   }
 });
 
+app.delete('/api/admins/:id', async (req, res) => {
+  try {
+    const adminId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(adminId)) {
+      return res.status(400).json({ message: 'Identifiant administrateur invalide.' });
+    }
+
+    const sessionInfo = await enforceAdminSession(req, res, { requireSuperAdmin: true });
+    if (!sessionInfo) {
+      return;
+    }
+
+    const target = await db.get('SELECT id, identifier FROM admins WHERE id = ?', [adminId]);
+    if (!target) {
+      return res.status(404).json({ message: 'Compte administrateur introuvable.' });
+    }
+
+    if (target.identifier.toLowerCase() === SUPER_ADMIN_IDENTIFIER) {
+      return res.status(400).json({ message: 'Le compte super administrateur ne peut pas être supprimé.' });
+    }
+
+    await db.run('DELETE FROM admins WHERE id = ?', [adminId]);
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error deleting admin', error);
+    res.status(500).json({ message: "Erreur lors de la suppression du compte administrateur" });
+  }
+});
+
+app.put('/api/admins/:id/password', async (req, res) => {
+  try {
+    const adminId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(adminId)) {
+      return res.status(400).json({ message: 'Identifiant administrateur invalide.' });
+    }
+
+    const sessionInfo = await enforceAdminSession(req, res, { allowSelfOnly: adminId });
+    if (!sessionInfo) {
+      return;
+    }
+
+    const { currentPassword, newPassword } = req.body || {};
+    const trimmedNewPassword = typeof newPassword === 'string' ? newPassword.trim() : '';
+
+    if (!trimmedNewPassword) {
+      return res.status(400).json({ message: 'Veuillez renseigner un nouveau mot de passe.' });
+    }
+
+    const admin = await db.get('SELECT password_hash FROM admins WHERE id = ?', [adminId]);
+    if (!admin) {
+      return res.status(404).json({ message: 'Compte administrateur introuvable.' });
+    }
+
+    if (admin.password_hash && admin.password_hash.trim()) {
+      if (!currentPassword || !currentPassword.trim()) {
+        return res.status(400).json({ message: 'Veuillez renseigner votre mot de passe actuel.' });
+      }
+
+      const isValid = await comparePassword(currentPassword, admin.password_hash);
+      if (!isValid) {
+        return res.status(401).json({ message: 'Mot de passe actuel invalide.' });
+      }
+    }
+
+    const passwordHash = await hashPassword(trimmedNewPassword);
+    await db.run('UPDATE admins SET password_hash = ? WHERE id = ?', [passwordHash, adminId]);
+
+    res.json({ message: 'Mot de passe mis à jour.' });
+  } catch (error) {
+    console.error('Error updating admin password', error);
+    res.status(500).json({ message: 'Erreur lors de la mise à jour du mot de passe administrateur' });
+  }
+});
+
 app.get('/api/settings/email-config', async (req, res) => {
   try {
+    const sessionInfo = await enforceAdminSession(req, res, {
+      allowRoles: Array.from(ADMIN_ROLES),
+    });
+    if (!sessionInfo) {
+      return;
+    }
+
     const settings = await getEmailSettingsFromDatabase();
     res.json(settings);
   } catch (error) {
@@ -901,6 +1137,13 @@ app.get('/api/settings/email-config', async (req, res) => {
 
 app.put('/api/settings/email-config', async (req, res) => {
   try {
+    const sessionInfo = await enforceAdminSession(req, res, {
+      allowRoles: Array.from(ADMIN_ROLES),
+    });
+    if (!sessionInfo) {
+      return;
+    }
+
     const {
       recipient,
       gmailClientId,
@@ -943,6 +1186,13 @@ app.put('/api/settings/email-config', async (req, res) => {
 
 app.get('/api/settings/email-recipient', async (req, res) => {
   try {
+    const sessionInfo = await enforceAdminSession(req, res, {
+      allowRoles: Array.from(ADMIN_ROLES),
+    });
+    if (!sessionInfo) {
+      return;
+    }
+
     const settings = await getEmailSettingsFromDatabase();
     res.json({ email: settings.recipient });
   } catch (error) {
@@ -955,6 +1205,13 @@ app.get('/api/settings/email-recipient', async (req, res) => {
 
 app.put('/api/settings/email-recipient', async (req, res) => {
   try {
+    const sessionInfo = await enforceAdminSession(req, res, {
+      allowRoles: Array.from(ADMIN_ROLES),
+    });
+    if (!sessionInfo) {
+      return;
+    }
+
     const { email } = req.body || {};
     const normalizedEmail = typeof email === 'string' ? email.trim() : '';
 
@@ -989,7 +1246,7 @@ app.post('/api/admins/login', async (req, res) => {
 
     if (identifier) {
       admin = await db.get(
-        `SELECT id, first_name, last_name, identifier, initials, created_at, password_hash
+        `SELECT id, first_name, last_name, identifier, initials, created_at, password_hash, role
          FROM admins WHERE LOWER(identifier) = ?`,
         [identifier.toLowerCase()]
       );
@@ -997,7 +1254,7 @@ app.post('/api/admins/login', async (req, res) => {
 
     if (!admin && firstName && lastName) {
       admin = await db.get(
-        `SELECT id, first_name, last_name, identifier, initials, created_at, password_hash
+        `SELECT id, first_name, last_name, identifier, initials, created_at, password_hash, role
          FROM admins
          WHERE LOWER(first_name) = ? AND LOWER(last_name) = ?`,
         [firstName.trim().toLowerCase(), lastName.trim().toLowerCase()]
@@ -1013,6 +1270,8 @@ app.post('/api/admins/login', async (req, res) => {
       return res.status(401).json({ message: 'Identifiants administrateur invalides.' });
     }
 
+    const token = createAdminSession(admin);
+
     res.json({
       id: admin.id,
       firstName: admin.first_name,
@@ -1020,6 +1279,8 @@ app.post('/api/admins/login', async (req, res) => {
       identifier: admin.identifier,
       initials: admin.initials,
       createdAt: admin.created_at,
+      role: admin.role,
+      token,
     });
   } catch (error) {
     console.error('Error logging admin', error);
@@ -1027,11 +1288,20 @@ app.post('/api/admins/login', async (req, res) => {
   }
 });
 
+app.post('/api/admins/logout', (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (token && activeAdminSessions.has(token)) {
+    activeAdminSessions.delete(token);
+  }
+  res.status(204).send();
+});
+
 app.get('/api/drivers/:id', async (req, res) => {
   try {
-    const driver = await db.get('SELECT id, first_name, last_name, email, phone FROM drivers WHERE id = ?', [
-      req.params.id,
-    ]);
+    const driver = await db.get(
+      "SELECT id, first_name, last_name, email, phone, CASE WHEN password_hash IS NULL OR TRIM(password_hash) = '' THEN 0 ELSE 1 END AS has_password FROM drivers WHERE id = ?",
+      [req.params.id]
+    );
 
     if (!driver) {
       return res.status(404).json({ message: 'Chauffeur introuvable' });
@@ -1041,6 +1311,132 @@ app.get('/api/drivers/:id', async (req, res) => {
   } catch (error) {
     console.error('Error fetching driver', error);
     res.status(500).json({ message: 'Erreur lors de la récupération du chauffeur' });
+  }
+});
+
+app.post('/api/drivers/login', async (req, res) => {
+  try {
+    const { driverId, password } = req.body || {};
+
+    if (!driverId) {
+      return res.status(400).json({ message: 'Identifiant chauffeur manquant.' });
+    }
+
+    const driver = await db.get('SELECT id, first_name, last_name, email, phone, password_hash FROM drivers WHERE id = ?', [
+      driverId,
+    ]);
+
+    if (!driver) {
+      return res.status(404).json({ message: 'Chauffeur introuvable.' });
+    }
+
+    const hasPassword = Boolean(driver.password_hash && driver.password_hash.trim());
+
+    if (hasPassword) {
+      if (!password || !password.trim()) {
+        return res.status(400).json({ message: 'Mot de passe requis pour ce chauffeur.' });
+      }
+
+      const isValid = await comparePassword(password, driver.password_hash);
+      if (!isValid) {
+        return res.status(401).json({ message: 'Mot de passe chauffeur invalide.' });
+      }
+    }
+
+    res.json({
+      id: driver.id,
+      firstName: driver.first_name,
+      lastName: driver.last_name,
+      email: driver.email,
+      phone: driver.phone,
+      hasPassword,
+    });
+  } catch (error) {
+    console.error('Error validating driver login', error);
+    res.status(500).json({ message: 'Erreur lors de la vérification du mot de passe chauffeur' });
+  }
+});
+
+app.get('/api/drivers/credentials', async (req, res) => {
+  try {
+    const sessionInfo = await enforceAdminSession(req, res, {
+      allowRoles: Array.from(ADMIN_ROLES),
+    });
+    if (!sessionInfo) {
+      return;
+    }
+
+    const drivers = await db.all(
+      "SELECT id, first_name, last_name, email, phone, CASE WHEN password_hash IS NULL OR TRIM(password_hash) = '' THEN 0 ELSE 1 END AS has_password FROM drivers ORDER BY last_name ASC, first_name ASC"
+    );
+
+    res.json(drivers);
+  } catch (error) {
+    console.error('Error fetching driver credentials', error);
+    res.status(500).json({ message: 'Erreur lors de la récupération des mots de passe chauffeurs' });
+  }
+});
+
+app.put('/api/drivers/:id/password', async (req, res) => {
+  try {
+    const driverId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(driverId)) {
+      return res.status(400).json({ message: 'Identifiant chauffeur invalide.' });
+    }
+
+    const sessionInfo = await enforceAdminSession(req, res, {
+      allowRoles: Array.from(ADMIN_ROLES),
+    });
+    if (!sessionInfo) {
+      return;
+    }
+
+    const { newPassword } = req.body || {};
+    const trimmedPassword = typeof newPassword === 'string' ? newPassword.trim() : '';
+
+    if (!trimmedPassword) {
+      return res.status(400).json({ message: 'Veuillez renseigner un mot de passe.' });
+    }
+
+    const driver = await db.get('SELECT id FROM drivers WHERE id = ?', [driverId]);
+    if (!driver) {
+      return res.status(404).json({ message: 'Chauffeur introuvable.' });
+    }
+
+    const passwordHash = await hashPassword(trimmedPassword);
+    await db.run('UPDATE drivers SET password_hash = ? WHERE id = ?', [passwordHash, driverId]);
+
+    res.json({ id: driverId, hasPassword: true });
+  } catch (error) {
+    console.error('Error setting driver password', error);
+    res.status(500).json({ message: 'Erreur lors de la mise à jour du mot de passe chauffeur' });
+  }
+});
+
+app.delete('/api/drivers/:id/password', async (req, res) => {
+  try {
+    const driverId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(driverId)) {
+      return res.status(400).json({ message: 'Identifiant chauffeur invalide.' });
+    }
+
+    const sessionInfo = await enforceAdminSession(req, res, {
+      allowRoles: Array.from(ADMIN_ROLES),
+    });
+    if (!sessionInfo) {
+      return;
+    }
+
+    const driver = await db.get('SELECT id FROM drivers WHERE id = ?', [driverId]);
+    if (!driver) {
+      return res.status(404).json({ message: 'Chauffeur introuvable.' });
+    }
+
+    await db.run('UPDATE drivers SET password_hash = NULL WHERE id = ?', [driverId]);
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error removing driver password', error);
+    res.status(500).json({ message: 'Erreur lors de la suppression du mot de passe chauffeur' });
   }
 });
 
@@ -1240,8 +1636,14 @@ app.delete('/api/courses/:id', async (req, res) => {
       return res.status(404).json({ message: 'Course introuvable' });
     }
 
+    await logActivity(courseId, 'deleted', user || 'LS', {
+      departure: existing.departure,
+      destination: existing.destination,
+      driverId: existing.driver_id,
+      scheduledAt: existing.date_time,
+    });
+
     await db.run('DELETE FROM courses WHERE id = ?', [courseId]);
-    await logActivity(courseId, 'deleted', user || 'LS', 'Course supprimée');
 
     res.status(204).send();
   } catch (error) {

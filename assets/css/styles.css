@@ -283,6 +283,26 @@
   border-bottom-color: rgb(37, 99, 235);
 }
 
+.settings-tab {
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+  color: rgb(75, 85, 99);
+  border-bottom: 2px solid transparent;
+  border-radius: 0.5rem 0.5rem 0 0;
+  transition: color 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.settings-tab:hover {
+  color: rgb(37, 99, 235);
+  background-color: rgb(243, 244, 246);
+}
+
+.settings-tab--active {
+  color: rgb(37, 99, 235);
+  border-bottom-color: rgb(37, 99, 235);
+  background-color: rgb(219, 234, 254);
+}
+
 .filter-chip {
   display: inline-flex;
   align-items: center;

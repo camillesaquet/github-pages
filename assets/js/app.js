@@ -1,5 +1,4 @@
 const API_BASE = '/api';
-const DEFAULT_GMAIL_REDIRECT_URI = 'http://localhost';
 
 const state = {
   drivers: [],
@@ -26,14 +25,21 @@ const state = {
   currentCourseId: null,
   photoDataUrl: null,
   pendingCompletionComments: '',
+  pendingDriverLogin: null,
+  driverPasswordError: '',
+  driverManagement: {
+    expanded: false,
+  },
+  driverPasswordManagement: {
+    drivers: [],
+    loading: false,
+    editingDriverId: null,
+  },
   settings: {
     emailRecipient: '',
-    gmailClientId: '',
-    gmailClientSecret: '',
-    gmailRefreshToken: '',
-    gmailRedirectUri: '',
     loaded: false,
     saving: false,
+    activeTab: 'email',
   },
 };
 
@@ -109,17 +115,19 @@ const elements = {
   adminIdentifierInput: document.getElementById('admin-identifier-input'),
   adminPasswordInput: document.getElementById('admin-password-input'),
   adminAccountsList: document.getElementById('admin-accounts'),
-  adminCreateForm: document.getElementById('admin-create-form'),
-  adminCreateFirstName: document.getElementById('admin-create-first-name'),
-  adminCreateLastName: document.getElementById('admin-create-last-name'),
-  adminCreatePassword: document.getElementById('admin-create-password'),
-  adminIdentifierPreview: document.getElementById('admin-identifier-preview'),
-  adminIdentifierPreviewValue: document.getElementById('admin-identifier-preview-value'),
+  driverPasswordModal: document.getElementById('driver-password-modal'),
+  driverPasswordForm: document.getElementById('driver-password-form'),
+  driverPasswordInput: document.getElementById('driver-password-input'),
+  driverPasswordCancel: document.getElementById('driver-password-cancel'),
+  driverPasswordError: document.getElementById('driver-password-error'),
+  driverPasswordName: document.getElementById('driver-password-name'),
   driverManagementForm: document.getElementById('driver-management-form'),
   driverFirstNameInput: document.getElementById('driver-first-name'),
   driverLastNameInput: document.getElementById('driver-last-name'),
   driverEmailInput: document.getElementById('driver-email'),
   driverListContainer: document.getElementById('driver-management-list'),
+  driverManagementToggle: document.getElementById('driver-management-toggle'),
+  driverManagementPanel: document.getElementById('driver-management-panel'),
   adminPlanningTab: document.getElementById('admin-planning-tab'),
   adminArchivesTab: document.getElementById('admin-archives-tab'),
   adminSettingsTab: document.getElementById('admin-settings-tab'),
@@ -135,11 +143,23 @@ const elements = {
   noArchive: document.getElementById('no-archive'),
   emailSettingsForm: document.getElementById('email-settings-form'),
   emailRecipientInput: document.getElementById('email-recipient'),
-  gmailClientIdInput: document.getElementById('gmail-client-id'),
-  gmailClientSecretInput: document.getElementById('gmail-client-secret'),
-  gmailRefreshTokenInput: document.getElementById('gmail-refresh-token'),
-  gmailRedirectUriInput: document.getElementById('gmail-redirect-uri'),
   emailSettingsStatus: document.getElementById('email-settings-status'),
+  settingsTabButtons: document.querySelectorAll('[data-settings-tab]'),
+  settingsPanels: document.querySelectorAll('[data-settings-panel]'),
+  driverPasswordList: document.getElementById('driver-password-list'),
+  driverPasswordEmpty: document.getElementById('driver-password-empty'),
+  adminManagementSection: document.getElementById('admin-management-panel'),
+  adminManagementList: document.getElementById('admin-management-list'),
+  adminManagementCreateForm: document.getElementById('admin-management-create-form'),
+  adminManagementFirstName: document.getElementById('admin-management-first-name'),
+  adminManagementLastName: document.getElementById('admin-management-last-name'),
+  adminManagementPassword: document.getElementById('admin-management-password'),
+  adminManagementRole: document.getElementById('admin-management-role'),
+  adminManagementStatus: document.getElementById('admin-management-status'),
+  adminPasswordForm: document.getElementById('admin-password-form'),
+  adminPasswordCurrent: document.getElementById('admin-password-current'),
+  adminPasswordNew: document.getElementById('admin-password-new'),
+  adminPasswordFeedback: document.getElementById('admin-password-feedback'),
 };
 
 function showElement(element) {
@@ -164,11 +184,17 @@ function setDefaultCourseDateTime() {
 }
 
 async function apiFetch(path, options = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(options.headers || {}),
+  };
+
+  if (state.currentUser?.role === 'admin' && state.currentUser?.token) {
+    headers['X-Admin-Token'] = state.currentUser.token;
+  }
+
   const config = {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
+    headers,
     ...options,
   };
 
@@ -192,6 +218,7 @@ function normalizeDriver(driver) {
     lastName: driver.last_name || driver.lastName,
     email: driver.email || null,
     phone: driver.phone || null,
+    hasPassword: Boolean(driver.has_password ?? driver.hasPassword ?? false),
   };
 }
 
@@ -205,6 +232,7 @@ function normalizeAdmin(admin) {
     identifier: admin.identifier,
     initials: admin.initials || computeInitials(firstName, lastName),
     createdAt: admin.created_at || admin.createdAt || null,
+    role: admin.role || 'standard',
   };
 }
 
@@ -275,6 +303,16 @@ function computeAdminIdentifier(firstName, lastName) {
   return `${trimmedFirst.charAt(0)}${trimmedLast}`.toLowerCase();
 }
 
+function formatAdminLevel(role) {
+  if (role === 'superadmin') {
+    return 'Super admin';
+  }
+  if (role === 'manager') {
+    return 'Gestion';
+  }
+  return 'Standard';
+}
+
 function getUserInitials() {
   if (state.currentUser?.initials) {
     return state.currentUser.initials;
@@ -319,7 +357,9 @@ function renderDriverList(drivers) {
     button.className = 'w-full text-left px-4 py-2 bg-gray-50 hover:bg-gray-100 rounded-md transition';
     button.innerHTML = `
       <div class="font-medium">${driver.firstName} ${driver.lastName}</div>
-      <div class="text-xs text-gray-500">Chauffeur</div>
+      <div class="text-xs text-gray-500 flex items-center gap-2">
+        ${driver.hasPassword ? '<i class="fas fa-lock text-green-600"></i><span>Mot de passe requis</span>' : '<span>Chauffeur</span>'}
+      </div>
     `;
     button.addEventListener('click', () => loginAsDriver(driver));
     elements.driverList.appendChild(button);
@@ -328,19 +368,128 @@ function renderDriverList(drivers) {
   showElement(elements.driverResults);
 }
 
-async function loginAsDriver(driver) {
+async function loginAsDriver(driver, options = {}) {
+  const { skipPasswordCheck = false } = options;
+  const normalizedDriver = normalizeDriver(driver);
+
+  if (!skipPasswordCheck && normalizedDriver.hasPassword) {
+    state.pendingDriverLogin = normalizedDriver;
+    state.driverPasswordError = '';
+    openDriverPasswordModal(normalizedDriver);
+    return;
+  }
+
   state.currentUser = {
-    ...driver,
+    ...normalizedDriver,
     role: 'driver',
-    initials: computeInitials(driver.firstName, driver.lastName),
+    initials: computeInitials(normalizedDriver.firstName, normalizedDriver.lastName),
   };
   state.isAdmin = false;
-  elements.driverNameDisplay.textContent = `${driver.firstName} ${driver.lastName}`;
+  elements.driverNameDisplay.textContent = `${normalizedDriver.firstName} ${normalizedDriver.lastName}`;
   hideElement(elements.loginPage);
   showElement(elements.driverDashboard);
   hideElement(elements.adminDashboard);
+  closeDriverPasswordModal();
   switchTab('today');
   await loadDriverCourses();
+}
+
+function openDriverPasswordModal(driver) {
+  if (!elements.driverPasswordModal) {
+    const password = window.prompt('Mot de passe chauffeur');
+    if (password !== null) {
+      state.driverPasswordError = '';
+      state.pendingDriverLogin = driver;
+      handleDriverPasswordPrompt(password);
+    }
+    return;
+  }
+
+  if (elements.driverPasswordInput) {
+    elements.driverPasswordInput.value = '';
+  }
+  if (elements.driverPasswordError) {
+    elements.driverPasswordError.textContent = '';
+    elements.driverPasswordError.classList.add('hidden');
+  }
+  if (elements.driverPasswordName) {
+    elements.driverPasswordName.textContent = `${driver.firstName} ${driver.lastName}`;
+  }
+
+  showElement(elements.driverPasswordModal);
+
+  setTimeout(() => {
+    elements.driverPasswordInput?.focus();
+  }, 50);
+}
+
+function closeDriverPasswordModal() {
+  if (elements.driverPasswordModal) {
+    hideElement(elements.driverPasswordModal);
+  }
+  state.pendingDriverLogin = null;
+  state.driverPasswordError = '';
+  if (elements.driverPasswordError) {
+    elements.driverPasswordError.textContent = '';
+    elements.driverPasswordError.classList.add('hidden');
+  }
+  if (elements.driverPasswordInput) {
+    elements.driverPasswordInput.value = '';
+  }
+}
+
+async function processDriverPassword(password, { inline = false } = {}) {
+  if (!state.pendingDriverLogin) {
+    return;
+  }
+
+  const trimmed = typeof password === 'string' ? password.trim() : '';
+  if (!trimmed) {
+    if (inline && elements.driverPasswordError) {
+      elements.driverPasswordError.textContent = 'Veuillez renseigner le mot de passe chauffeur.';
+      elements.driverPasswordError.classList.remove('hidden');
+    } else {
+      alert('Veuillez renseigner le mot de passe chauffeur.');
+    }
+    return;
+  }
+
+  try {
+    const pending = state.pendingDriverLogin;
+    const result = await apiFetch('/drivers/login', {
+      method: 'POST',
+      body: JSON.stringify({ driverId: pending.id, password: trimmed }),
+    });
+
+    const normalized = normalizeDriver({
+      id: result.id || pending.id,
+      first_name: result.firstName || pending.firstName,
+      last_name: result.lastName || pending.lastName,
+      email: result.email ?? pending.email,
+      phone: result.phone ?? pending.phone,
+      has_password: result.hasPassword ?? pending.hasPassword,
+    });
+
+    closeDriverPasswordModal();
+    await loginAsDriver(normalized, { skipPasswordCheck: true });
+  } catch (error) {
+    state.driverPasswordError = error.message;
+    if (inline && elements.driverPasswordError) {
+      elements.driverPasswordError.textContent = error.message;
+      elements.driverPasswordError.classList.remove('hidden');
+    } else {
+      alert(error.message);
+    }
+  }
+}
+
+async function handleDriverPasswordSubmit(event) {
+  event.preventDefault();
+  await processDriverPassword(elements.driverPasswordInput?.value || '', { inline: true });
+}
+
+async function handleDriverPasswordPrompt(password) {
+  await processDriverPassword(password, { inline: false });
 }
 
 function setAdminSession(admin) {
@@ -348,19 +497,20 @@ function setAdminSession(admin) {
   state.currentUser = {
     ...normalized,
     role: 'admin',
+    adminLevel: normalized.role || 'standard',
+    token: admin.token || null,
   };
   state.isAdmin = true;
   state.adminFilters = { driverId: 'all', range: 'week' };
   state.archiveFilters = { driverId: 'all', merchandise: 'all', period: 'week', from: null, to: null };
   state.settings = {
     emailRecipient: '',
-    gmailClientId: '',
-    gmailClientSecret: '',
-    gmailRefreshToken: '',
-    gmailRedirectUri: '',
     loaded: false,
     saving: false,
+    activeTab: 'email',
   };
+  state.driverPasswordManagement = { drivers: [], loading: false, editingDriverId: null };
+  state.driverManagement.expanded = false;
   updateArchivePeriodInputs();
 
   hideElement(elements.loginPage);
@@ -369,25 +519,18 @@ function setAdminSession(admin) {
   closeAdminLoginModal();
 
   if (elements.adminIdentifierDisplay) {
-    elements.adminIdentifierDisplay.textContent = `${state.currentUser.initials} (${state.currentUser.identifier})`;
+    const levelLabel =
+      state.currentUser.adminLevel === 'superadmin'
+        ? 'Super admin'
+        : state.currentUser.adminLevel === 'manager'
+        ? 'Gestion'
+        : 'Standard';
+    elements.adminIdentifierDisplay.textContent = `${state.currentUser.initials} (${state.currentUser.identifier} • ${levelLabel})`;
   }
 
-  if (elements.emailRecipientInput) {
-    elements.emailRecipientInput.value = '';
-  }
-  if (elements.gmailClientIdInput) {
-    elements.gmailClientIdInput.value = '';
-  }
-  if (elements.gmailClientSecretInput) {
-    elements.gmailClientSecretInput.value = '';
-  }
-  if (elements.gmailRefreshTokenInput) {
-    elements.gmailRefreshTokenInput.value = '';
-  }
-  if (elements.gmailRedirectUriInput) {
-    elements.gmailRedirectUriInput.value = '';
-  }
   resetEmailSettingsStatus();
+  renderDriverManagementPanel();
+  renderSettingsTabs();
 
   state.adminView = 'planning';
   switchAdminView('planning');
@@ -398,6 +541,10 @@ function setAdminSession(admin) {
   loadAdminCourses();
   loadActivityLog();
   loadArchivedCourses();
+  loadEmailRecipient();
+  if (state.currentUser.adminLevel === 'superadmin') {
+    loadAdmins();
+  }
 }
 
 function openAdminLoginModal() {
@@ -408,11 +555,6 @@ function openAdminLoginModal() {
   if (elements.adminPasswordInput) {
     elements.adminPasswordInput.value = '';
   }
-  elements.adminCreateForm?.reset();
-  if (elements.adminCreatePassword) {
-    elements.adminCreatePassword.value = '';
-  }
-  updateAdminIdentifierPreview();
   loadAdmins();
   showElement(elements.adminLoginModal);
 }
@@ -450,43 +592,12 @@ async function handleAdminLogin(event) {
   }
 }
 
-async function handleAdminCreate(event) {
-  event.preventDefault();
-
-  const firstName = elements.adminCreateFirstName.value.trim();
-  const lastName = elements.adminCreateLastName.value.trim();
-  const password = elements.adminCreatePassword?.value || '';
-
-  if (!firstName || !lastName) {
-    alert('Veuillez renseigner un prénom et un nom.');
-    return;
-  }
-
-  if (!password) {
-    alert('Veuillez définir un mot de passe pour ce compte administrateur.');
-    return;
-  }
-
-  try {
-    const admin = await apiFetch('/admins', {
-      method: 'POST',
-      body: JSON.stringify({ firstName, lastName, password }),
-    });
-
-    await loadAdmins();
-    alert(`Compte administrateur créé. Identifiant : ${admin.identifier}`);
-    setAdminSession(admin);
-  } catch (error) {
-    console.error('Erreur lors de la création du compte administrateur', error);
-    alert(error.message);
-  }
-}
-
 async function loadAdmins() {
   try {
     const admins = await apiFetch('/admins');
     state.admins = admins.map(normalizeAdmin);
     renderAdminAccounts();
+    renderAdminManagement();
   } catch (error) {
     console.error('Erreur lors du chargement des comptes administrateurs', error);
   }
@@ -517,7 +628,10 @@ function renderAdminAccounts() {
     item.innerHTML = `
       <div>
         <div class="font-medium text-gray-800">${admin.firstName} ${admin.lastName}</div>
-        <div class="text-xs text-gray-500">Identifiant : <span class="font-mono">${admin.identifier}</span></div>
+        <div class="text-xs text-gray-500 flex flex-wrap gap-2 items-center">
+          <span>Identifiant : <span class="font-mono">${admin.identifier}</span></span>
+          <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">${formatAdminLevel(admin.role)}</span>
+        </div>
       </div>
       <button type="button" class="text-blue-600 hover:text-blue-800 text-xs font-medium">Utiliser</button>
     `;
@@ -534,25 +648,93 @@ function renderAdminAccounts() {
   elements.adminAccountsList.appendChild(list);
 }
 
-function updateAdminIdentifierPreview() {
-  if (!elements.adminIdentifierPreview) {
+function renderAdminManagement() {
+  if (!elements.adminManagementSection) {
     return;
   }
 
-  const firstName = elements.adminCreateFirstName.value;
-  const lastName = elements.adminCreateLastName.value;
-  const identifier = computeAdminIdentifier(firstName, lastName);
-
-  if (identifier) {
-    elements.adminIdentifierPreviewValue.textContent = identifier;
-    showElement(elements.adminIdentifierPreview);
-  } else {
-    elements.adminIdentifierPreviewValue.textContent = '';
-    hideElement(elements.adminIdentifierPreview);
+  if (state.currentUser?.adminLevel !== 'superadmin') {
+    hideElement(elements.adminManagementSection);
+    return;
   }
+
+  showElement(elements.adminManagementSection);
+
+  if (elements.adminManagementStatus) {
+    elements.adminManagementStatus.textContent = '';
+    elements.adminManagementStatus.classList.add('hidden');
+  }
+
+  const listContainer = elements.adminManagementList;
+  if (!listContainer) {
+    return;
+  }
+
+  listContainer.innerHTML = '';
+
+  if (!state.admins.length) {
+    const empty = document.createElement('p');
+    empty.className = 'text-sm text-gray-500';
+    empty.textContent = 'Aucun administrateur enregistré.';
+    listContainer.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement('ul');
+  list.className = 'space-y-3';
+
+  state.admins.forEach((admin) => {
+    const item = document.createElement('li');
+    item.className =
+      'border border-gray-200 rounded-md px-4 py-3 bg-white shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3';
+
+    const info = document.createElement('div');
+    info.innerHTML = `
+      <div class="font-medium text-gray-800">${admin.firstName} ${admin.lastName}</div>
+      <div class="text-xs text-gray-500 flex flex-wrap gap-2 items-center mt-1">
+        <span>Identifiant : <span class="font-mono">${admin.identifier}</span></span>
+        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">${formatAdminLevel(admin.role)}</span>
+      </div>
+    `;
+
+    const actions = document.createElement('div');
+    actions.className = 'flex items-center gap-2';
+
+    if (admin.identifier.toLowerCase() === 'lsaquet') {
+      const badge = document.createElement('span');
+      badge.className = 'text-xs text-green-600 font-semibold';
+      badge.textContent = 'Compte principal';
+      actions.appendChild(badge);
+    } else {
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'btn-danger text-xs';
+      deleteBtn.textContent = 'Supprimer';
+      deleteBtn.addEventListener('click', () => handleAdminDeletion(admin.id));
+      actions.appendChild(deleteBtn);
+    }
+
+    item.appendChild(info);
+    item.appendChild(actions);
+    list.appendChild(item);
+  });
+
+  listContainer.appendChild(list);
 }
 
-function logout() {
+async function logout(event) {
+  if (event?.preventDefault) {
+    event.preventDefault();
+  }
+
+  if (state.currentUser?.role === 'admin' && state.currentUser?.token) {
+    try {
+      await apiFetch('/admins/logout', { method: 'POST' });
+    } catch (error) {
+      console.warn('Erreur lors de la fermeture de session administrateur', error);
+    }
+  }
+
   state.currentUser = null;
   state.isAdmin = false;
   state.driverCourses = [];
@@ -562,13 +744,12 @@ function logout() {
   state.archiveFilters = { driverId: 'all', merchandise: 'all', period: 'week', from: null, to: null };
   state.settings = {
     emailRecipient: '',
-    gmailClientId: '',
-    gmailClientSecret: '',
-    gmailRefreshToken: '',
-    gmailRedirectUri: '',
     loaded: false,
     saving: false,
+    activeTab: 'email',
   };
+  state.driverPasswordManagement = { drivers: [], loading: false, editingDriverId: null };
+  state.driverManagement.expanded = false;
   state.activityLog = [];
   state.courseCache.clear();
   elements.lastnameInput.value = '';
@@ -578,6 +759,7 @@ function logout() {
   hideElement(elements.courseModal);
   closePhotoModal();
   closeCourseEditor();
+  closeDriverPasswordModal();
   closeAdminLoginModal();
   if (elements.adminIdentifierDisplay) {
     elements.adminIdentifierDisplay.textContent = '';
@@ -600,19 +782,16 @@ function logout() {
   if (elements.emailRecipientInput) {
     elements.emailRecipientInput.value = '';
   }
-  if (elements.gmailClientIdInput) {
-    elements.gmailClientIdInput.value = '';
-  }
-  if (elements.gmailClientSecretInput) {
-    elements.gmailClientSecretInput.value = '';
-  }
-  if (elements.gmailRefreshTokenInput) {
-    elements.gmailRefreshTokenInput.value = '';
-  }
-  if (elements.gmailRedirectUriInput) {
-    elements.gmailRedirectUriInput.value = '';
-  }
   resetEmailSettingsStatus();
+  if (elements.adminPasswordForm) {
+    elements.adminPasswordForm.reset();
+  }
+  if (elements.adminPasswordFeedback) {
+    elements.adminPasswordFeedback.textContent = '';
+    elements.adminPasswordFeedback.classList.add('hidden');
+  }
+  renderDriverManagementPanel();
+  renderSettingsTabs();
   state.adminView = 'planning';
   updateAdminRangeButtons();
   updateArchivePeriodInputs();
@@ -685,7 +864,23 @@ function switchAdminView(view) {
   }
 
   if (view === 'settings') {
-    loadEmailSettings();
+    ensureSettingsData();
+  }
+}
+
+function renderDriverManagementPanel() {
+  if (!elements.driverManagementPanel || !elements.driverManagementToggle) {
+    return;
+  }
+
+  if (state.driverManagement.expanded) {
+    showElement(elements.driverManagementPanel);
+    elements.driverManagementToggle.textContent = 'Masquer la gestion des chauffeurs';
+    elements.driverManagementToggle.setAttribute('aria-expanded', 'true');
+  } else {
+    hideElement(elements.driverManagementPanel);
+    elements.driverManagementToggle.textContent = 'Afficher la gestion des chauffeurs';
+    elements.driverManagementToggle.setAttribute('aria-expanded', 'false');
   }
 }
 
@@ -701,6 +896,69 @@ function updateAdminRangeButtons() {
       button.classList.remove('filter-chip--active');
     }
   });
+}
+
+function renderSettingsTabs() {
+  if (elements.settingsTabButtons) {
+    elements.settingsTabButtons.forEach((button) => {
+      const tabKey = button.getAttribute('data-settings-tab');
+      const isAdminTab = tabKey === 'admins';
+      if (isAdminTab && state.currentUser?.adminLevel !== 'superadmin') {
+        button.classList.add('hidden');
+      } else {
+        button.classList.remove('hidden');
+      }
+
+      if (tabKey === state.settings.activeTab) {
+        button.classList.add('settings-tab--active');
+      } else {
+        button.classList.remove('settings-tab--active');
+      }
+    });
+  }
+
+  if (elements.settingsPanels) {
+    elements.settingsPanels.forEach((panel) => {
+      const panelKey = panel.getAttribute('data-settings-panel');
+      const isAdminPanel = panelKey === 'admins';
+      if (isAdminPanel && state.currentUser?.adminLevel !== 'superadmin') {
+        hideElement(panel);
+        return;
+      }
+      if (panelKey === state.settings.activeTab) {
+        showElement(panel);
+      } else {
+        hideElement(panel);
+      }
+    });
+  }
+}
+
+function ensureSettingsData(tab = state.settings.activeTab) {
+  if (!state.isAdmin) {
+    return;
+  }
+
+  if (tab === 'email') {
+    loadEmailRecipient();
+  } else if (tab === 'drivers') {
+    loadDriverCredentials();
+  } else if (tab === 'admins' && state.currentUser?.adminLevel === 'superadmin') {
+    renderAdminManagement();
+  }
+}
+
+function setSettingsTab(tab) {
+  if (tab === 'admins' && state.currentUser?.adminLevel !== 'superadmin') {
+    return;
+  }
+
+  if (state.settings.activeTab !== tab) {
+    state.settings.activeTab = tab;
+    renderSettingsTabs();
+  }
+
+  ensureSettingsData(tab);
 }
 
 async function loadDriverCourses() {
@@ -1124,52 +1382,22 @@ function showEmailSettingsStatus(message, isError = false) {
   elements.emailSettingsStatus.classList.add(isError ? 'text-red-600' : 'text-green-600');
 }
 
-async function loadEmailSettings(force = false) {
+async function loadEmailRecipient(force = false) {
   if (!elements.emailSettingsForm) {
     return;
   }
 
   if (state.settings.loaded && !force) {
     elements.emailRecipientInput.value = state.settings.emailRecipient;
-    if (elements.gmailClientIdInput) {
-      elements.gmailClientIdInput.value = state.settings.gmailClientId;
-    }
-    if (elements.gmailClientSecretInput) {
-      elements.gmailClientSecretInput.value = state.settings.gmailClientSecret;
-    }
-    if (elements.gmailRefreshTokenInput) {
-      elements.gmailRefreshTokenInput.value = state.settings.gmailRefreshToken;
-    }
-    if (elements.gmailRedirectUriInput) {
-      elements.gmailRedirectUriInput.value =
-        state.settings.gmailRedirectUri || DEFAULT_GMAIL_REDIRECT_URI;
-    }
     return;
   }
 
   try {
     resetEmailSettingsStatus();
-    const response = await apiFetch('/settings/email-config');
-    state.settings.emailRecipient = response.recipient || '';
-    state.settings.gmailClientId = response.gmailClientId || '';
-    state.settings.gmailClientSecret = response.gmailClientSecret || '';
-    state.settings.gmailRefreshToken = response.gmailRefreshToken || '';
-    state.settings.gmailRedirectUri = response.gmailRedirectUri || '';
+    const response = await apiFetch('/settings/email-recipient');
+    state.settings.emailRecipient = response.email || '';
     state.settings.loaded = true;
     elements.emailRecipientInput.value = state.settings.emailRecipient;
-    if (elements.gmailClientIdInput) {
-      elements.gmailClientIdInput.value = state.settings.gmailClientId;
-    }
-    if (elements.gmailClientSecretInput) {
-      elements.gmailClientSecretInput.value = state.settings.gmailClientSecret;
-    }
-    if (elements.gmailRefreshTokenInput) {
-      elements.gmailRefreshTokenInput.value = state.settings.gmailRefreshToken;
-    }
-    if (elements.gmailRedirectUriInput) {
-      elements.gmailRedirectUriInput.value =
-        state.settings.gmailRedirectUri || DEFAULT_GMAIL_REDIRECT_URI;
-    }
   } catch (error) {
     console.error('Erreur lors du chargement de la configuration email', error);
     showEmailSettingsStatus(error.message || "Impossible de charger l'adresse email.", true);
@@ -1188,24 +1416,9 @@ async function handleEmailSettingsSubmit(event) {
   }
 
   const email = elements.emailRecipientInput?.value.trim() || '';
-  const gmailClientId = elements.gmailClientIdInput?.value.trim() || '';
-  const gmailClientSecret = elements.gmailClientSecretInput?.value.trim() || '';
-  const gmailRefreshToken = elements.gmailRefreshTokenInput?.value.trim() || '';
-  const gmailRedirectUri =
-    elements.gmailRedirectUriInput?.value.trim() || DEFAULT_GMAIL_REDIRECT_URI;
 
   if (!email) {
     showEmailSettingsStatus('Veuillez renseigner une adresse email.', true);
-    return;
-  }
-
-  if (!gmailClientId || !gmailClientSecret || !gmailRefreshToken) {
-    showEmailSettingsStatus('Veuillez renseigner les identifiants Gmail requis.', true);
-    return;
-  }
-
-  if (!gmailRedirectUri) {
-    showEmailSettingsStatus('Veuillez renseigner une Redirect URI Gmail.', true);
     return;
   }
 
@@ -1219,49 +1432,284 @@ async function handleEmailSettingsSubmit(event) {
       submitButton.classList.add('opacity-50', 'cursor-not-allowed');
     }
 
-    const response = await apiFetch('/settings/email-config', {
+    const response = await apiFetch('/settings/email-recipient', {
       method: 'PUT',
-      body: JSON.stringify({
-        recipient: email,
-        gmailClientId,
-        gmailClientSecret,
-        gmailRefreshToken,
-        gmailRedirectUri,
-      }),
+      body: JSON.stringify({ email }),
     });
 
-    state.settings.emailRecipient = response.recipient || email;
-    state.settings.gmailClientId = response.gmailClientId || gmailClientId;
-    state.settings.gmailClientSecret = response.gmailClientSecret || gmailClientSecret;
-    state.settings.gmailRefreshToken = response.gmailRefreshToken || gmailRefreshToken;
-    state.settings.gmailRedirectUri = response.gmailRedirectUri || gmailRedirectUri;
+    state.settings.emailRecipient = response.email || email;
     state.settings.loaded = true;
 
     elements.emailRecipientInput.value = state.settings.emailRecipient;
-    if (elements.gmailClientIdInput) {
-      elements.gmailClientIdInput.value = state.settings.gmailClientId;
-    }
-    if (elements.gmailClientSecretInput) {
-      elements.gmailClientSecretInput.value = state.settings.gmailClientSecret;
-    }
-    if (elements.gmailRefreshTokenInput) {
-      elements.gmailRefreshTokenInput.value = state.settings.gmailRefreshToken;
-    }
-    if (elements.gmailRedirectUriInput) {
-      elements.gmailRedirectUriInput.value =
-        state.settings.gmailRedirectUri || DEFAULT_GMAIL_REDIRECT_URI;
-    }
 
-    showEmailSettingsStatus('Configuration email mise à jour avec succès.');
+    showEmailSettingsStatus('Adresse email mise à jour avec succès.');
   } catch (error) {
-    console.error("Erreur lors de l'enregistrement de la configuration email", error);
-    showEmailSettingsStatus(error.message || 'Impossible de mettre à jour la configuration email.', true);
+    console.error("Erreur lors de l'enregistrement de l'adresse email", error);
+    showEmailSettingsStatus(error.message || "Impossible de mettre à jour l'adresse email.", true);
   } finally {
     state.settings.saving = false;
     if (submitButton) {
       submitButton.disabled = false;
       submitButton.classList.remove('opacity-50', 'cursor-not-allowed');
     }
+  }
+}
+
+async function loadDriverCredentials() {
+  if (!elements.driverPasswordList || state.driverPasswordManagement.loading) {
+    return;
+  }
+
+  try {
+    state.driverPasswordManagement.loading = true;
+    const drivers = await apiFetch('/drivers/credentials');
+    state.driverPasswordManagement.drivers = drivers.map(normalizeDriver);
+    renderDriverCredentials();
+  } catch (error) {
+    console.error('Erreur lors du chargement des mots de passe chauffeurs', error);
+    if (elements.driverPasswordList) {
+      elements.driverPasswordList.innerHTML = `<p class="text-sm text-red-600">${
+        error.message || 'Impossible de récupérer les chauffeurs.'
+      }</p>`;
+    }
+  } finally {
+    state.driverPasswordManagement.loading = false;
+  }
+}
+
+function renderDriverCredentials() {
+  if (!elements.driverPasswordList) {
+    return;
+  }
+
+  const drivers = state.driverPasswordManagement.drivers || [];
+  elements.driverPasswordList.innerHTML = '';
+
+  if (!drivers.length) {
+    if (elements.driverPasswordEmpty) {
+      elements.driverPasswordEmpty.classList.remove('hidden');
+    }
+    return;
+  }
+
+  if (elements.driverPasswordEmpty) {
+    elements.driverPasswordEmpty.classList.add('hidden');
+  }
+
+  const list = document.createElement('ul');
+  list.className = 'space-y-3';
+
+  drivers.forEach((driver) => {
+    const item = document.createElement('li');
+    item.className =
+      'border border-gray-200 rounded-md px-4 py-3 bg-white shadow-sm flex flex-col gap-3';
+
+    const statusBadge = driver.hasPassword
+      ? '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs"><i class="fas fa-lock"></i> Protégé</span>'
+      : '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-xs"><i class="fas fa-unlock"></i> Aucun mot de passe</span>';
+
+    item.innerHTML = `
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <div>
+          <div class="font-medium text-gray-800">${driver.firstName} ${driver.lastName}</div>
+          <div class="text-xs text-gray-500 mt-1 flex items-center gap-2">${statusBadge}</div>
+        </div>
+      </div>
+    `;
+
+    const actionsContainer = document.createElement('div');
+    actionsContainer.className = 'flex flex-col sm:flex-row sm:items-center gap-2';
+
+    if (state.driverPasswordManagement.editingDriverId === driver.id) {
+      const form = document.createElement('form');
+      form.className = 'flex flex-col sm:flex-row gap-2 w-full';
+      form.innerHTML = `
+        <input type="password" class="form-input sm:flex-1" placeholder="Nouveau mot de passe" required />
+        <div class="flex gap-2">
+          <button type="submit" class="btn-primary text-sm">Enregistrer</button>
+          <button type="button" data-action="cancel" class="btn-secondary text-sm">Annuler</button>
+        </div>
+      `;
+      form.addEventListener('submit', (event) => handleDriverPasswordSave(event, driver.id));
+      const cancelButton = form.querySelector('[data-action="cancel"]');
+      cancelButton.addEventListener('click', () => {
+        state.driverPasswordManagement.editingDriverId = null;
+        renderDriverCredentials();
+      });
+      actionsContainer.appendChild(form);
+      setTimeout(() => {
+        form.querySelector('input')?.focus();
+      }, 0);
+    } else {
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'btn-secondary text-xs sm:text-sm';
+      editBtn.textContent = driver.hasPassword ? 'Modifier le mot de passe' : 'Définir un mot de passe';
+      editBtn.addEventListener('click', () => {
+        state.driverPasswordManagement.editingDriverId = driver.id;
+        renderDriverCredentials();
+      });
+      actionsContainer.appendChild(editBtn);
+
+      if (driver.hasPassword) {
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'btn-danger text-xs sm:text-sm';
+        removeBtn.textContent = 'Supprimer le mot de passe';
+        removeBtn.addEventListener('click', () => removeDriverPassword(driver.id));
+        actionsContainer.appendChild(removeBtn);
+      }
+    }
+
+    item.appendChild(actionsContainer);
+    list.appendChild(item);
+  });
+
+  elements.driverPasswordList.appendChild(list);
+}
+
+async function handleDriverPasswordSave(event, driverId) {
+  event.preventDefault();
+  const input = event.target.querySelector('input[type="password"]');
+  const newPassword = input?.value || '';
+
+  if (!newPassword.trim()) {
+    alert('Veuillez renseigner un mot de passe.');
+    return;
+  }
+
+  try {
+    await apiFetch(`/drivers/${driverId}/password`, {
+      method: 'PUT',
+      body: JSON.stringify({ newPassword }),
+    });
+    state.driverPasswordManagement.editingDriverId = null;
+    await loadDriverCredentials();
+  } catch (error) {
+    console.error('Erreur lors de la mise à jour du mot de passe chauffeur', error);
+    alert(error.message);
+  }
+}
+
+async function removeDriverPassword(driverId) {
+  if (!confirm('Supprimer le mot de passe de ce chauffeur ?')) {
+    return;
+  }
+
+  try {
+    await apiFetch(`/drivers/${driverId}/password`, { method: 'DELETE' });
+    state.driverPasswordManagement.editingDriverId = null;
+    await loadDriverCredentials();
+  } catch (error) {
+    console.error('Erreur lors de la suppression du mot de passe chauffeur', error);
+    alert(error.message);
+  }
+}
+
+function setAdminManagementStatus(message, isError = false) {
+  if (!elements.adminManagementStatus) {
+    if (isError) {
+      alert(message);
+    } else {
+      console.info(message);
+    }
+    return;
+  }
+
+  elements.adminManagementStatus.textContent = message;
+  elements.adminManagementStatus.classList.remove('hidden');
+  elements.adminManagementStatus.classList.remove('text-green-600', 'text-red-600');
+  elements.adminManagementStatus.classList.add(isError ? 'text-red-600' : 'text-green-600');
+}
+
+async function handleAdminCreation(event) {
+  event.preventDefault();
+
+  if (!elements.adminManagementCreateForm) {
+    return;
+  }
+
+  const firstName = elements.adminManagementFirstName?.value.trim() || '';
+  const lastName = elements.adminManagementLastName?.value.trim() || '';
+  const password = elements.adminManagementPassword?.value || '';
+  const role = elements.adminManagementRole?.value || 'standard';
+
+  if (!firstName || !lastName || !password) {
+    setAdminManagementStatus('Veuillez renseigner prénom, nom et mot de passe.', true);
+    return;
+  }
+
+  try {
+    setAdminManagementStatus('Création du compte administrateur en cours...');
+    await apiFetch('/admins', {
+      method: 'POST',
+      body: JSON.stringify({ firstName, lastName, password, role }),
+    });
+    setAdminManagementStatus('Administrateur créé avec succès. Identifiant visible dans la liste.');
+    elements.adminManagementCreateForm.reset();
+    await loadAdmins();
+  } catch (error) {
+    console.error('Erreur lors de la création du compte administrateur', error);
+    setAdminManagementStatus(error.message || 'Impossible de créer ce compte administrateur.', true);
+  }
+}
+
+async function handleAdminDeletion(adminId) {
+  if (!confirm('Supprimer cet administrateur ?')) {
+    return;
+  }
+
+  try {
+    await apiFetch(`/admins/${adminId}`, { method: 'DELETE' });
+    setAdminManagementStatus('Administrateur supprimé.');
+    await loadAdmins();
+  } catch (error) {
+    console.error('Erreur lors de la suppression du compte administrateur', error);
+    setAdminManagementStatus(error.message || 'Impossible de supprimer cet administrateur.', true);
+  }
+}
+
+function setAdminPasswordFeedback(message, isError = false) {
+  if (!elements.adminPasswordFeedback) {
+    if (isError) {
+      alert(message);
+    } else {
+      console.info(message);
+    }
+    return;
+  }
+
+  elements.adminPasswordFeedback.textContent = message;
+  elements.adminPasswordFeedback.classList.remove('hidden');
+  elements.adminPasswordFeedback.classList.remove('text-green-600', 'text-red-600');
+  elements.adminPasswordFeedback.classList.add(isError ? 'text-red-600' : 'text-green-600');
+}
+
+async function handleAdminPasswordChange(event) {
+  event.preventDefault();
+
+  if (!state.currentUser?.id) {
+    return;
+  }
+
+  const currentPassword = elements.adminPasswordCurrent?.value || '';
+  const newPassword = elements.adminPasswordNew?.value || '';
+
+  if (!newPassword.trim()) {
+    setAdminPasswordFeedback('Veuillez renseigner un nouveau mot de passe.', true);
+    return;
+  }
+
+  try {
+    await apiFetch(`/admins/${state.currentUser.id}/password`, {
+      method: 'PUT',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    setAdminPasswordFeedback('Mot de passe mis à jour avec succès.');
+    elements.adminPasswordForm?.reset();
+  } catch (error) {
+    console.error('Erreur lors du changement de mot de passe administrateur', error);
+    setAdminPasswordFeedback(error.message || 'Impossible de mettre à jour le mot de passe.', true);
   }
 }
 
@@ -1824,6 +2272,13 @@ async function openCourseModal(courseId) {
       editButton.innerHTML = '<i class="fas fa-edit mr-1"></i> Modifier';
       editButton.addEventListener('click', () => editCourse(course.id));
       elements.modalActions.appendChild(editButton);
+
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition';
+      deleteButton.innerHTML = '<i class="fas fa-trash mr-1"></i> Supprimer';
+      deleteButton.addEventListener('click', () => deleteCourse(course.id));
+      elements.modalActions.appendChild(deleteButton);
     } else if (course.status !== 'completed' && !isArchived) {
       const validateButton = document.createElement('button');
       validateButton.type = 'button';
@@ -2009,10 +2464,11 @@ function registerEventListeners() {
 
   elements.closeAdminLoginModalBtn?.addEventListener('click', closeAdminLoginModal);
   elements.adminLoginForm?.addEventListener('submit', handleAdminLogin);
-  elements.adminCreateForm?.addEventListener('submit', handleAdminCreate);
   elements.driverManagementForm?.addEventListener('submit', handleAddDriver);
-  elements.adminCreateFirstName?.addEventListener('input', updateAdminIdentifierPreview);
-  elements.adminCreateLastName?.addEventListener('input', updateAdminIdentifierPreview);
+  elements.driverManagementToggle?.addEventListener('click', () => {
+    state.driverManagement.expanded = !state.driverManagement.expanded;
+    renderDriverManagementPanel();
+  });
 
   elements.archivePeriodFilter?.addEventListener('change', handleArchivePeriodChange);
   elements.archiveDriverFilter?.addEventListener('change', handleArchiveFiltersChange);
@@ -2020,6 +2476,20 @@ function registerEventListeners() {
   elements.archiveFromInput?.addEventListener('change', handleArchiveDatesChange);
   elements.archiveToInput?.addEventListener('change', handleArchiveDatesChange);
   elements.emailSettingsForm?.addEventListener('submit', handleEmailSettingsSubmit);
+  elements.driverPasswordForm?.addEventListener('submit', handleDriverPasswordSubmit);
+  elements.driverPasswordCancel?.addEventListener('click', () => {
+    closeDriverPasswordModal();
+  });
+  if (elements.settingsTabButtons) {
+    elements.settingsTabButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const tabKey = button.getAttribute('data-settings-tab');
+        setSettingsTab(tabKey || 'email');
+      });
+    });
+  }
+  elements.adminManagementCreateForm?.addEventListener('submit', handleAdminCreation);
+  elements.adminPasswordForm?.addEventListener('submit', handleAdminPasswordChange);
 
   window.addEventListener('click', (event) => {
     if (event.target === elements.courseModal) {
@@ -2034,6 +2504,9 @@ function registerEventListeners() {
     if (event.target === elements.adminLoginModal) {
       closeAdminLoginModal();
     }
+    if (event.target === elements.driverPasswordModal) {
+      closeDriverPasswordModal();
+    }
   });
 }
 
@@ -2041,6 +2514,8 @@ function init() {
   setDefaultCourseDateTime();
   updateAdminRangeButtons();
   updateArchivePeriodInputs();
+  renderDriverManagementPanel();
+  renderSettingsTabs();
   registerEventListeners();
 }
 
