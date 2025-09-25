@@ -455,9 +455,62 @@
           <section class="bg-white p-4 rounded-lg shadow-sm max-w-xl">
             <h2 class="text-lg font-semibold text-gray-800">Paramètres email</h2>
             <form id="email-settings-form" class="space-y-4 mt-4">
-              <div>
-                <label class="form-label" for="email-recipient">Adresse email de réception</label>
-                <input type="email" id="email-recipient" class="form-input" required />
+              <div class="space-y-4">
+                <div>
+                  <label class="form-label" for="email-recipient">Adresse email de réception</label>
+                  <input type="email" id="email-recipient" class="form-input" required />
+                </div>
+                <div class="border-t border-gray-200 pt-4">
+                  <h3 class="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+                    Identifiants Gmail
+                  </h3>
+                  <p class="text-sm text-gray-500 mt-1">
+                    Renseignez les informations OAuth fournies par Google pour autoriser l'envoi des mails.
+                  </p>
+                </div>
+                <div>
+                  <label class="form-label" for="gmail-client-id">Client ID</label>
+                  <input
+                    type="text"
+                    id="gmail-client-id"
+                    class="form-input"
+                    autocomplete="off"
+                    spellcheck="false"
+                    required
+                  />
+                </div>
+                <div>
+                  <label class="form-label" for="gmail-client-secret">Client secret</label>
+                  <input
+                    type="password"
+                    id="gmail-client-secret"
+                    class="form-input"
+                    autocomplete="new-password"
+                    required
+                  />
+                </div>
+                <div>
+                  <label class="form-label" for="gmail-refresh-token">Refresh token</label>
+                  <input
+                    type="password"
+                    id="gmail-refresh-token"
+                    class="form-input"
+                    autocomplete="new-password"
+                    required
+                  />
+                </div>
+                <div>
+                  <label class="form-label" for="gmail-redirect-uri">Redirect URI</label>
+                  <input
+                    type="text"
+                    id="gmail-redirect-uri"
+                    class="form-input"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="http://localhost"
+                    required
+                  />
+                </div>
               </div>
               <div class="flex justify-end">
                 <button type="submit" class="btn-primary">

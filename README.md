@@ -69,7 +69,13 @@ npm run create-gmail-token -- --refresh-token="1//0gXXXXXXXXXXXXXXXXXXXX" --outp
 Ces fichiers peuvent être générés à l'aide du script de test Gmail fourni et permettent de conserver
 le dossier `assets/images` vide tout en référencant l'image `login.png` pour l'écran de connexion.
 
-Le destinataire peut ensuite être modifié directement depuis l'onglet « Paramètres » de l'administration.
+L'onglet « Paramètres » de l'administration permet de piloter toute la configuration e-mail :
+
+- adresse de réception utilisée lors de la validation d'une course ;
+- `client_id`, `client_secret`, `refresh_token` et `redirect_uri` Gmail à renseigner tels qu'affichés dans la console Google Cloud.
+
+Les valeurs saisies sont stockées en base SQLite. Elles sont rechargées à chaque envoi d'e-mail et servent de secours si aucune
+variable d'environnement n'est définie. Les variables d'environnement restent prioritaires si elles sont présentes.
 
 ### Structure des données
 

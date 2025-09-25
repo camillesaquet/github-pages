@@ -19,6 +19,10 @@ const GMAIL_CONFIG_SOURCES = {
   credentialsPath: process.env.GMAIL_CREDENTIALS_PATH || path.join(__dirname, 'credentials.json'),
   tokenPath: process.env.GMAIL_TOKEN_PATH || path.join(__dirname, 'token.json'),
 };
+const GMAIL_CLIENT_ID_SETTING_KEY = 'gmail_client_id';
+const GMAIL_CLIENT_SECRET_SETTING_KEY = 'gmail_client_secret';
+const GMAIL_REFRESH_TOKEN_SETTING_KEY = 'gmail_refresh_token';
+const GMAIL_REDIRECT_URI_SETTING_KEY = 'gmail_redirect_uri';
 
 function applyFallback(config, key, value) {
   if (!config[key] && typeof value === 'string' && value.trim()) {
@@ -33,6 +37,19 @@ function loadGmailConfig() {
     redirectUri: (process.env.GMAIL_REDIRECT_URI || '').trim(),
     refreshToken: (process.env.GMAIL_REFRESH_TOKEN || '').trim(),
   };
+
+  if (!config.clientId && gmailDbConfig.clientId) {
+    config.clientId = gmailDbConfig.clientId;
+  }
+  if (!config.clientSecret && gmailDbConfig.clientSecret) {
+    config.clientSecret = gmailDbConfig.clientSecret;
+  }
+  if (!config.redirectUri && gmailDbConfig.redirectUri) {
+    config.redirectUri = gmailDbConfig.redirectUri;
+  }
+  if (!config.refreshToken && gmailDbConfig.refreshToken) {
+    config.refreshToken = gmailDbConfig.refreshToken;
+  }
 
   if (fs.existsSync(GMAIL_CONFIG_SOURCES.credentialsPath)) {
     try {
@@ -90,6 +107,12 @@ let db;
 
 let gmailService = null;
 let gmailConfigSignature = null;
+let gmailDbConfig = {
+  clientId: '',
+  clientSecret: '',
+  refreshToken: '',
+  redirectUri: '',
+};
 
 async function columnExists(table, column) {
   const pragma = await db.all(`PRAGMA table_info(${table})`);
@@ -114,6 +137,91 @@ async function ensureSetting(key, defaultValue) {
   if (existing === null || existing === undefined) {
     await setSettingValue(key, defaultValue);
   }
+}
+
+async function refreshGmailSettingsCache() {
+  const [clientId, clientSecret, refreshToken, redirectUri] = await Promise.all([
+    getSetting(GMAIL_CLIENT_ID_SETTING_KEY),
+    getSetting(GMAIL_CLIENT_SECRET_SETTING_KEY),
+    getSetting(GMAIL_REFRESH_TOKEN_SETTING_KEY),
+    getSetting(GMAIL_REDIRECT_URI_SETTING_KEY),
+  ]);
+
+  gmailDbConfig = {
+    clientId: (clientId || '').trim(),
+    clientSecret: (clientSecret || '').trim(),
+    refreshToken: (refreshToken || '').trim(),
+    redirectUri: (redirectUri || '').trim(),
+  };
+
+  return gmailDbConfig;
+}
+
+async function ensureDefaultGmailSettings() {
+  await ensureSetting(GMAIL_CLIENT_ID_SETTING_KEY, (process.env.GMAIL_CLIENT_ID || '').trim());
+  await ensureSetting(GMAIL_CLIENT_SECRET_SETTING_KEY, (process.env.GMAIL_CLIENT_SECRET || '').trim());
+  await ensureSetting(GMAIL_REFRESH_TOKEN_SETTING_KEY, (process.env.GMAIL_REFRESH_TOKEN || '').trim());
+  await ensureSetting(
+    GMAIL_REDIRECT_URI_SETTING_KEY,
+    (process.env.GMAIL_REDIRECT_URI || DEFAULT_GMAIL_REDIRECT_URI).trim()
+  );
+
+  await refreshGmailSettingsCache();
+}
+
+async function getEmailSettingsFromDatabase() {
+  const [recipient, gmailSettings] = await Promise.all([
+    getCompletionEmailRecipient(),
+    refreshGmailSettingsCache(),
+  ]);
+
+  return {
+    recipient,
+    gmailClientId: gmailSettings.clientId,
+    gmailClientSecret: gmailSettings.clientSecret,
+    gmailRefreshToken: gmailSettings.refreshToken,
+    gmailRedirectUri: gmailSettings.redirectUri || DEFAULT_GMAIL_REDIRECT_URI,
+  };
+}
+
+async function persistEmailSettings({
+  recipient,
+  gmailClientId,
+  gmailClientSecret,
+  gmailRefreshToken,
+  gmailRedirectUri,
+}) {
+  const updates = [];
+
+  if (typeof recipient === 'string') {
+    updates.push(setSettingValue(EMAIL_RECIPIENT_SETTING_KEY, recipient.trim()));
+  }
+
+  if (typeof gmailClientId === 'string') {
+    updates.push(setSettingValue(GMAIL_CLIENT_ID_SETTING_KEY, gmailClientId.trim()));
+  }
+
+  if (typeof gmailClientSecret === 'string') {
+    updates.push(setSettingValue(GMAIL_CLIENT_SECRET_SETTING_KEY, gmailClientSecret.trim()));
+  }
+
+  if (typeof gmailRefreshToken === 'string') {
+    updates.push(setSettingValue(GMAIL_REFRESH_TOKEN_SETTING_KEY, gmailRefreshToken.trim()));
+  }
+
+  if (typeof gmailRedirectUri === 'string') {
+    const value = gmailRedirectUri.trim() || DEFAULT_GMAIL_REDIRECT_URI;
+    updates.push(setSettingValue(GMAIL_REDIRECT_URI_SETTING_KEY, value));
+  }
+
+  if (updates.length) {
+    await Promise.all(updates);
+    await refreshGmailSettingsCache();
+    gmailService = null;
+    gmailConfigSignature = null;
+  }
+
+  return getEmailSettingsFromDatabase();
 }
 
 async function getCompletionEmailRecipient() {
@@ -482,6 +590,7 @@ async function initDatabase() {
 
   await ensureDefaultAdmin();
   await ensureDefaultEmailRecipient();
+  await ensureDefaultGmailSettings();
 }
 
 function normalizeActivityDetails(details) {
@@ -778,10 +887,64 @@ app.post('/api/admins', async (req, res) => {
   }
 });
 
+app.get('/api/settings/email-config', async (req, res) => {
+  try {
+    const settings = await getEmailSettingsFromDatabase();
+    res.json(settings);
+  } catch (error) {
+    console.error('Error fetching email configuration', error);
+    res
+      .status(500)
+      .json({ message: "Erreur lors de la récupération de la configuration email" });
+  }
+});
+
+app.put('/api/settings/email-config', async (req, res) => {
+  try {
+    const {
+      recipient,
+      gmailClientId,
+      gmailClientSecret,
+      gmailRefreshToken,
+      gmailRedirectUri,
+    } = req.body || {};
+
+    const normalizedRecipient = typeof recipient === 'string' ? recipient.trim() : '';
+    const normalizedClientId = typeof gmailClientId === 'string' ? gmailClientId.trim() : '';
+    const normalizedClientSecret =
+      typeof gmailClientSecret === 'string' ? gmailClientSecret.trim() : '';
+    const normalizedRefreshToken =
+      typeof gmailRefreshToken === 'string' ? gmailRefreshToken.trim() : '';
+    const normalizedRedirectUri =
+      typeof gmailRedirectUri === 'string' ? gmailRedirectUri.trim() : DEFAULT_GMAIL_REDIRECT_URI;
+
+    if (!isValidEmail(normalizedRecipient)) {
+      return res.status(400).json({ message: 'Adresse email de réception invalide.' });
+    }
+
+    if (!normalizedClientId || !normalizedClientSecret || !normalizedRefreshToken) {
+      return res.status(400).json({ message: 'Veuillez renseigner les identifiants Gmail complets.' });
+    }
+
+    const settings = await persistEmailSettings({
+      recipient: normalizedRecipient,
+      gmailClientId: normalizedClientId,
+      gmailClientSecret: normalizedClientSecret,
+      gmailRefreshToken: normalizedRefreshToken,
+      gmailRedirectUri: normalizedRedirectUri,
+    });
+
+    res.json(settings);
+  } catch (error) {
+    console.error('Error updating email configuration', error);
+    res.status(500).json({ message: "Erreur lors de la mise à jour de la configuration email" });
+  }
+});
+
 app.get('/api/settings/email-recipient', async (req, res) => {
   try {
-    const email = await getCompletionEmailRecipient();
-    res.json({ email });
+    const settings = await getEmailSettingsFromDatabase();
+    res.json({ email: settings.recipient });
   } catch (error) {
     console.error('Error fetching email recipient setting', error);
     res
@@ -792,16 +955,16 @@ app.get('/api/settings/email-recipient', async (req, res) => {
 
 app.put('/api/settings/email-recipient', async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email } = req.body || {};
     const normalizedEmail = typeof email === 'string' ? email.trim() : '';
 
     if (!isValidEmail(normalizedEmail)) {
       return res.status(400).json({ message: 'Adresse email invalide.' });
     }
 
-    await setSettingValue(EMAIL_RECIPIENT_SETTING_KEY, normalizedEmail);
+    const settings = await persistEmailSettings({ recipient: normalizedEmail });
 
-    res.json({ email: normalizedEmail });
+    res.json({ email: settings.recipient });
   } catch (error) {
     console.error('Error updating email recipient setting', error);
     res

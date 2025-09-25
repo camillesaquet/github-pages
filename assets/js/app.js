@@ -1,4 +1,5 @@
 const API_BASE = '/api';
+const DEFAULT_GMAIL_REDIRECT_URI = 'http://localhost';
 
 const state = {
   drivers: [],
@@ -27,6 +28,10 @@ const state = {
   pendingCompletionComments: '',
   settings: {
     emailRecipient: '',
+    gmailClientId: '',
+    gmailClientSecret: '',
+    gmailRefreshToken: '',
+    gmailRedirectUri: '',
     loaded: false,
     saving: false,
   },
@@ -130,6 +135,10 @@ const elements = {
   noArchive: document.getElementById('no-archive'),
   emailSettingsForm: document.getElementById('email-settings-form'),
   emailRecipientInput: document.getElementById('email-recipient'),
+  gmailClientIdInput: document.getElementById('gmail-client-id'),
+  gmailClientSecretInput: document.getElementById('gmail-client-secret'),
+  gmailRefreshTokenInput: document.getElementById('gmail-refresh-token'),
+  gmailRedirectUriInput: document.getElementById('gmail-redirect-uri'),
   emailSettingsStatus: document.getElementById('email-settings-status'),
 };
 
@@ -343,7 +352,15 @@ function setAdminSession(admin) {
   state.isAdmin = true;
   state.adminFilters = { driverId: 'all', range: 'week' };
   state.archiveFilters = { driverId: 'all', merchandise: 'all', period: 'week', from: null, to: null };
-  state.settings = { emailRecipient: '', loaded: false, saving: false };
+  state.settings = {
+    emailRecipient: '',
+    gmailClientId: '',
+    gmailClientSecret: '',
+    gmailRefreshToken: '',
+    gmailRedirectUri: '',
+    loaded: false,
+    saving: false,
+  };
   updateArchivePeriodInputs();
 
   hideElement(elements.loginPage);
@@ -357,6 +374,18 @@ function setAdminSession(admin) {
 
   if (elements.emailRecipientInput) {
     elements.emailRecipientInput.value = '';
+  }
+  if (elements.gmailClientIdInput) {
+    elements.gmailClientIdInput.value = '';
+  }
+  if (elements.gmailClientSecretInput) {
+    elements.gmailClientSecretInput.value = '';
+  }
+  if (elements.gmailRefreshTokenInput) {
+    elements.gmailRefreshTokenInput.value = '';
+  }
+  if (elements.gmailRedirectUriInput) {
+    elements.gmailRedirectUriInput.value = '';
   }
   resetEmailSettingsStatus();
 
@@ -531,7 +560,15 @@ function logout() {
   state.archivedCourses = [];
   state.adminFilters = { driverId: 'all', range: 'week' };
   state.archiveFilters = { driverId: 'all', merchandise: 'all', period: 'week', from: null, to: null };
-  state.settings = { emailRecipient: '', loaded: false, saving: false };
+  state.settings = {
+    emailRecipient: '',
+    gmailClientId: '',
+    gmailClientSecret: '',
+    gmailRefreshToken: '',
+    gmailRedirectUri: '',
+    loaded: false,
+    saving: false,
+  };
   state.activityLog = [];
   state.courseCache.clear();
   elements.lastnameInput.value = '';
@@ -562,6 +599,18 @@ function logout() {
   }
   if (elements.emailRecipientInput) {
     elements.emailRecipientInput.value = '';
+  }
+  if (elements.gmailClientIdInput) {
+    elements.gmailClientIdInput.value = '';
+  }
+  if (elements.gmailClientSecretInput) {
+    elements.gmailClientSecretInput.value = '';
+  }
+  if (elements.gmailRefreshTokenInput) {
+    elements.gmailRefreshTokenInput.value = '';
+  }
+  if (elements.gmailRedirectUriInput) {
+    elements.gmailRedirectUriInput.value = '';
   }
   resetEmailSettingsStatus();
   state.adminView = 'planning';
@@ -1076,21 +1125,51 @@ function showEmailSettingsStatus(message, isError = false) {
 }
 
 async function loadEmailSettings(force = false) {
-  if (!elements.emailRecipientInput) {
+  if (!elements.emailSettingsForm) {
     return;
   }
 
   if (state.settings.loaded && !force) {
     elements.emailRecipientInput.value = state.settings.emailRecipient;
+    if (elements.gmailClientIdInput) {
+      elements.gmailClientIdInput.value = state.settings.gmailClientId;
+    }
+    if (elements.gmailClientSecretInput) {
+      elements.gmailClientSecretInput.value = state.settings.gmailClientSecret;
+    }
+    if (elements.gmailRefreshTokenInput) {
+      elements.gmailRefreshTokenInput.value = state.settings.gmailRefreshToken;
+    }
+    if (elements.gmailRedirectUriInput) {
+      elements.gmailRedirectUriInput.value =
+        state.settings.gmailRedirectUri || DEFAULT_GMAIL_REDIRECT_URI;
+    }
     return;
   }
 
   try {
     resetEmailSettingsStatus();
-    const response = await apiFetch('/settings/email-recipient');
-    state.settings.emailRecipient = response.email || '';
+    const response = await apiFetch('/settings/email-config');
+    state.settings.emailRecipient = response.recipient || '';
+    state.settings.gmailClientId = response.gmailClientId || '';
+    state.settings.gmailClientSecret = response.gmailClientSecret || '';
+    state.settings.gmailRefreshToken = response.gmailRefreshToken || '';
+    state.settings.gmailRedirectUri = response.gmailRedirectUri || '';
     state.settings.loaded = true;
     elements.emailRecipientInput.value = state.settings.emailRecipient;
+    if (elements.gmailClientIdInput) {
+      elements.gmailClientIdInput.value = state.settings.gmailClientId;
+    }
+    if (elements.gmailClientSecretInput) {
+      elements.gmailClientSecretInput.value = state.settings.gmailClientSecret;
+    }
+    if (elements.gmailRefreshTokenInput) {
+      elements.gmailRefreshTokenInput.value = state.settings.gmailRefreshToken;
+    }
+    if (elements.gmailRedirectUriInput) {
+      elements.gmailRedirectUriInput.value =
+        state.settings.gmailRedirectUri || DEFAULT_GMAIL_REDIRECT_URI;
+    }
   } catch (error) {
     console.error('Erreur lors du chargement de la configuration email', error);
     showEmailSettingsStatus(error.message || "Impossible de charger l'adresse email.", true);
@@ -1100,7 +1179,7 @@ async function loadEmailSettings(force = false) {
 async function handleEmailSettingsSubmit(event) {
   event.preventDefault();
 
-  if (!elements.emailRecipientInput) {
+  if (!elements.emailSettingsForm) {
     return;
   }
 
@@ -1108,14 +1187,29 @@ async function handleEmailSettingsSubmit(event) {
     return;
   }
 
-  const email = elements.emailRecipientInput.value.trim();
+  const email = elements.emailRecipientInput?.value.trim() || '';
+  const gmailClientId = elements.gmailClientIdInput?.value.trim() || '';
+  const gmailClientSecret = elements.gmailClientSecretInput?.value.trim() || '';
+  const gmailRefreshToken = elements.gmailRefreshTokenInput?.value.trim() || '';
+  const gmailRedirectUri =
+    elements.gmailRedirectUriInput?.value.trim() || DEFAULT_GMAIL_REDIRECT_URI;
 
   if (!email) {
     showEmailSettingsStatus('Veuillez renseigner une adresse email.', true);
     return;
   }
 
-  const submitButton = elements.emailSettingsForm?.querySelector('button[type="submit"]');
+  if (!gmailClientId || !gmailClientSecret || !gmailRefreshToken) {
+    showEmailSettingsStatus('Veuillez renseigner les identifiants Gmail requis.', true);
+    return;
+  }
+
+  if (!gmailRedirectUri) {
+    showEmailSettingsStatus('Veuillez renseigner une Redirect URI Gmail.', true);
+    return;
+  }
+
+  const submitButton = elements.emailSettingsForm.querySelector('button[type="submit"]');
 
   try {
     state.settings.saving = true;
@@ -1125,18 +1219,43 @@ async function handleEmailSettingsSubmit(event) {
       submitButton.classList.add('opacity-50', 'cursor-not-allowed');
     }
 
-    const response = await apiFetch('/settings/email-recipient', {
+    const response = await apiFetch('/settings/email-config', {
       method: 'PUT',
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({
+        recipient: email,
+        gmailClientId,
+        gmailClientSecret,
+        gmailRefreshToken,
+        gmailRedirectUri,
+      }),
     });
 
-    state.settings.emailRecipient = response.email || email;
+    state.settings.emailRecipient = response.recipient || email;
+    state.settings.gmailClientId = response.gmailClientId || gmailClientId;
+    state.settings.gmailClientSecret = response.gmailClientSecret || gmailClientSecret;
+    state.settings.gmailRefreshToken = response.gmailRefreshToken || gmailRefreshToken;
+    state.settings.gmailRedirectUri = response.gmailRedirectUri || gmailRedirectUri;
     state.settings.loaded = true;
+
     elements.emailRecipientInput.value = state.settings.emailRecipient;
-    showEmailSettingsStatus('Adresse email mise à jour avec succès.');
+    if (elements.gmailClientIdInput) {
+      elements.gmailClientIdInput.value = state.settings.gmailClientId;
+    }
+    if (elements.gmailClientSecretInput) {
+      elements.gmailClientSecretInput.value = state.settings.gmailClientSecret;
+    }
+    if (elements.gmailRefreshTokenInput) {
+      elements.gmailRefreshTokenInput.value = state.settings.gmailRefreshToken;
+    }
+    if (elements.gmailRedirectUriInput) {
+      elements.gmailRedirectUriInput.value =
+        state.settings.gmailRedirectUri || DEFAULT_GMAIL_REDIRECT_URI;
+    }
+
+    showEmailSettingsStatus('Configuration email mise à jour avec succès.');
   } catch (error) {
-    console.error("Erreur lors de l'enregistrement de l'adresse email", error);
-    showEmailSettingsStatus(error.message || 'Impossible de mettre à jour cette adresse.', true);
+    console.error("Erreur lors de l'enregistrement de la configuration email", error);
+    showEmailSettingsStatus(error.message || 'Impossible de mettre à jour la configuration email.', true);
   } finally {
     state.settings.saving = false;
     if (submitButton) {
