@@ -53,6 +53,16 @@ depuis des fichiers placés à la racine du projet :
 - `credentials.json` contenant la configuration OAuth (clé `web` ou `installed`).
 - `token.json` contenant un champ `refresh_token` valide.
 
+Vous pouvez générer ce fichier `token.json` automatiquement à partir d'un refresh token existant :
+
+```bash
+# Exemple avec le refresh_token récupéré via votre script get_refresh_token.js
+npm run create-gmail-token -- --refresh-token="1//0gXXXXXXXXXXXXXXXXXXXX"
+
+# Pour choisir un autre emplacement ou écraser un fichier existant
+npm run create-gmail-token -- --refresh-token="1//0gXXXXXXXXXXXXXXXXXXXX" --output=/chemin/vers/token.json --force
+```
+
 Ces fichiers peuvent être générés à l'aide du script de test Gmail fourni et permettent de conserver
 le dossier `assets/images` vide tout en référencant l'image `login.png` pour l'écran de connexion.
 
