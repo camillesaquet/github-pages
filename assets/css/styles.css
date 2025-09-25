@@ -2,6 +2,13 @@
   animation: fadeIn 0.3s ease-in-out;
 }
 
+#login-page {
+  background-image: url('../images/login.png');
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;

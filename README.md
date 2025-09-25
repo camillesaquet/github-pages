@@ -47,6 +47,15 @@ L'application utilise l'API Gmail en OAuth2. Avant de lancer le serveur, défini
 | `GMAIL_SENDER` | Adresse e-mail expéditrice (défaut : `chauffeur.agriholann@gmail.com`). |
 | `DEFAULT_COMPLETION_EMAIL` | Adresse de réception par défaut des comptes rendus de courses. |
 
+À défaut de variables d'environnement, le serveur tente automatiquement de charger les identifiants
+depuis des fichiers placés à la racine du projet :
+
+- `credentials.json` contenant la configuration OAuth (clé `web` ou `installed`).
+- `token.json` contenant un champ `refresh_token` valide.
+
+Ces fichiers peuvent être générés à l'aide du script de test Gmail fourni et permettent de conserver
+le dossier `assets/images` vide tout en référencant l'image `login.png` pour l'écran de connexion.
+
 Le destinataire peut ensuite être modifié directement depuis l'onglet « Paramètres » de l'administration.
 
 ### Structure des données

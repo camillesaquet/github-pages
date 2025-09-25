@@ -13,10 +13,51 @@ const DB_PATH = path.join(__dirname, 'db', 'agriholann.db');
 const ATTACHMENTS_DIR = path.join(__dirname, 'storage', 'attachments');
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || 'admin';
 const DEFAULT_COMPLETION_EMAIL = process.env.DEFAULT_COMPLETION_EMAIL || 'laurent.saquet@agriholann.com';
-const GMAIL_CLIENT_ID = process.env.GMAIL_CLIENT_ID || '';
-const GMAIL_CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET || '';
-const GMAIL_REDIRECT_URI = process.env.GMAIL_REDIRECT_URI || 'http://localhost';
-const GMAIL_REFRESH_TOKEN = process.env.GMAIL_REFRESH_TOKEN || '';
+
+function loadGmailConfig() {
+  const config = {
+    clientId: '',
+    clientSecret: '',
+    redirectUri: '',
+    refreshToken: '',
+  };
+
+  const credentialsPath = process.env.GMAIL_CREDENTIALS_PATH || path.join(__dirname, 'credentials.json');
+  const tokenPath = process.env.GMAIL_TOKEN_PATH || path.join(__dirname, 'token.json');
+
+  if (fs.existsSync(credentialsPath)) {
+    try {
+      const rawCredentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
+      const oauthConfig = rawCredentials.web || rawCredentials.installed || {};
+      config.clientId = oauthConfig.client_id || config.clientId;
+      config.clientSecret = oauthConfig.client_secret || config.clientSecret;
+      if (Array.isArray(oauthConfig.redirect_uris) && oauthConfig.redirect_uris.length > 0) {
+        config.redirectUri = oauthConfig.redirect_uris[0];
+      }
+    } catch (error) {
+      console.error('Impossible de lire credentials.json :', error.message);
+    }
+  }
+
+  if (fs.existsSync(tokenPath)) {
+    try {
+      const token = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
+      config.refreshToken = token.refresh_token || config.refreshToken;
+    } catch (error) {
+      console.error('Impossible de lire token.json :', error.message);
+    }
+  }
+
+  return config;
+}
+
+const gmailFileConfig = loadGmailConfig();
+
+const GMAIL_CLIENT_ID = process.env.GMAIL_CLIENT_ID || gmailFileConfig.clientId || '';
+const GMAIL_CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET || gmailFileConfig.clientSecret || '';
+const GMAIL_REDIRECT_URI =
+  process.env.GMAIL_REDIRECT_URI || gmailFileConfig.redirectUri || 'http://localhost';
+const GMAIL_REFRESH_TOKEN = process.env.GMAIL_REFRESH_TOKEN || gmailFileConfig.refreshToken || '';
 const GMAIL_SENDER = process.env.GMAIL_SENDER || 'chauffeur.agriholann@gmail.com';
 const EMAIL_RECIPIENT_SETTING_KEY = 'completion_email_recipient';
 const EMAIL_ATTACHMENT_NAME = 'bon-transport.jpg';
@@ -142,7 +183,9 @@ async function sendGmailMessage({
   const service = getGmailService();
 
   if (!service) {
-    throw new Error('Configuration de la messagerie Gmail manquante. Veuillez vérifier les identifiants OAuth.');
+    throw new Error(
+      'Configuration de la messagerie Gmail manquante. Définissez les variables GMAIL_* ou fournissez credentials.json et token.json.'
+    );
   }
 
   const rawMessage = buildMimeMessage({
