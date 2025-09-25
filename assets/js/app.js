@@ -1,7 +1,8 @@
 const API_BASE = '/api';
 
 const state = {
-  drivers: [],
+  driverSearchResults: [],
+  adminDrivers: [],
   driverCourses: [],
   adminCourses: [],
   archivedCourses: [],
@@ -29,6 +30,8 @@ const state = {
   driverPasswordError: '',
   driverManagement: {
     expanded: false,
+    loading: false,
+    error: null,
   },
   driverPasswordManagement: {
     drivers: [],
@@ -334,8 +337,8 @@ async function searchDrivers() {
 
   try {
     const drivers = await apiFetch(`/drivers?search=${encodeURIComponent(searchTerm)}`);
-    state.drivers = drivers.map(normalizeDriver);
-    renderDriverList(state.drivers);
+    state.driverSearchResults = drivers.map(normalizeDriver);
+    renderDriverList(state.driverSearchResults);
   } catch (error) {
     console.error(error);
     elements.driverList.innerHTML = '<p class="text-sm text-red-600">Erreur lors de la recherche</p>';
@@ -511,6 +514,10 @@ function setAdminSession(admin) {
   };
   state.driverPasswordManagement = { drivers: [], loading: false, editingDriverId: null };
   state.driverManagement.expanded = false;
+  state.driverManagement.loading = false;
+  state.driverManagement.error = null;
+  state.adminDrivers = [];
+  state.driverSearchResults = [];
   updateArchivePeriodInputs();
 
   hideElement(elements.loginPage);
@@ -737,6 +744,8 @@ async function logout(event) {
 
   state.currentUser = null;
   state.isAdmin = false;
+  state.driverSearchResults = [];
+  state.adminDrivers = [];
   state.driverCourses = [];
   state.adminCourses = [];
   state.archivedCourses = [];
@@ -750,6 +759,8 @@ async function logout(event) {
   };
   state.driverPasswordManagement = { drivers: [], loading: false, editingDriverId: null };
   state.driverManagement.expanded = false;
+  state.driverManagement.loading = false;
+  state.driverManagement.error = null;
   state.activityLog = [];
   state.courseCache.clear();
   elements.lastnameInput.value = '';
@@ -986,10 +997,18 @@ async function loadDriverCourses() {
   }
 }
 
-async function loadAdminDrivers() {
+async function loadAdminDrivers({ force = false } = {}) {
+  if (state.driverManagement.loading && !force) {
+    return;
+  }
+
+  state.driverManagement.loading = true;
+  state.driverManagement.error = null;
+  renderDriverManagement();
+
   try {
     const drivers = await apiFetch('/drivers');
-    state.drivers = drivers.map(normalizeDriver);
+    state.adminDrivers = drivers.map(normalizeDriver);
     const selectedDriverFilter = state.adminFilters.driverId || 'all';
 
     elements.adminDriverSelect.innerHTML = '<option value="all">Tous les chauffeurs</option>';
@@ -999,7 +1018,7 @@ async function loadAdminDrivers() {
       elements.archiveDriverFilter.innerHTML = '<option value="all">Tous les chauffeurs</option>';
     }
 
-    state.drivers.forEach((driver) => {
+    state.adminDrivers.forEach((driver) => {
       const label = `${driver.firstName} ${driver.lastName}`;
       const option = document.createElement('option');
       option.value = driver.id;
@@ -1022,10 +1041,12 @@ async function loadAdminDrivers() {
     if (elements.archiveDriverFilter) {
       elements.archiveDriverFilter.value = state.archiveFilters.driverId || 'all';
     }
-
-    renderDriverManagement();
   } catch (error) {
     console.error('Erreur lors du chargement des chauffeurs', error);
+    state.driverManagement.error = error.message || 'Impossible de récupérer les chauffeurs.';
+  } finally {
+    state.driverManagement.loading = false;
+    renderDriverManagement();
   }
 }
 
@@ -1036,7 +1057,23 @@ function renderDriverManagement() {
 
   elements.driverListContainer.innerHTML = '';
 
-  if (!state.drivers.length) {
+  if (state.driverManagement.loading) {
+    const loading = document.createElement('p');
+    loading.className = 'text-sm text-gray-500';
+    loading.textContent = 'Chargement des chauffeurs...';
+    elements.driverListContainer.appendChild(loading);
+    return;
+  }
+
+  if (state.driverManagement.error) {
+    const error = document.createElement('p');
+    error.className = 'text-sm text-red-600';
+    error.textContent = state.driverManagement.error;
+    elements.driverListContainer.appendChild(error);
+    return;
+  }
+
+  if (!state.adminDrivers.length) {
     const empty = document.createElement('p');
     empty.className = 'text-sm text-gray-500';
     empty.textContent = 'Aucun chauffeur enregistré.';
@@ -1047,7 +1084,7 @@ function renderDriverManagement() {
   const list = document.createElement('ul');
   list.className = 'divide-y divide-gray-200';
 
-  state.drivers.forEach((driver) => {
+  state.adminDrivers.forEach((driver) => {
     const item = document.createElement('li');
     item.className = 'flex items-center justify-between py-2';
     item.innerHTML = `
@@ -1085,7 +1122,7 @@ async function handleAddDriver(event) {
     });
 
     elements.driverManagementForm.reset();
-    await loadAdminDrivers();
+    await loadAdminDrivers({ force: true });
     await loadAdminCourses();
   } catch (error) {
     console.error('Erreur lors de l\'ajout du chauffeur', error);
@@ -1100,7 +1137,7 @@ async function handleDeleteDriver(driverId) {
 
   try {
     await apiFetch(`/drivers/${driverId}`, { method: 'DELETE' });
-    await loadAdminDrivers();
+    await loadAdminDrivers({ force: true });
     await loadAdminCourses();
     await loadArchivedCourses();
     await loadActivityLog();
@@ -2468,6 +2505,9 @@ function registerEventListeners() {
   elements.driverManagementToggle?.addEventListener('click', () => {
     state.driverManagement.expanded = !state.driverManagement.expanded;
     renderDriverManagementPanel();
+    if (state.driverManagement.expanded && !state.adminDrivers.length && !state.driverManagement.loading) {
+      loadAdminDrivers({ force: true });
+    }
   });
 
   elements.archivePeriodFilter?.addEventListener('change', handleArchivePeriodChange);
