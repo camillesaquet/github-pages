@@ -10,7 +10,7 @@ Application web permettant à l'entreprise Agri Holann de planifier les tournée
 - **Gestion du parc de chauffeurs** : ajout/suppression de chauffeurs depuis l'administration, sélection rapide dans les formulaires de création de course.
 - **Archivage avancé** : onglet dédié pour consulter les courses archivées avec filtres par chauffeur, période et type de marchandise, archivage/désarchivage directement depuis le journal d'activité.
 - **Gestion complète des courses** : création, édition, suppression et validation avec prise de photo du bon de transport.
-- **Notifications par e-mail** : envoi automatique (transport simulé) d'un récapitulatif au siège lors de la validation d'une course.
+- **Notifications par e-mail** : envoi automatique via l'API Gmail avec pièce jointe lors de la validation d'une course.
 - **Persistance des données** : stockage des chauffeurs, courses, journaux d'activité et e-mails simulés dans une base SQLite embarquée.
 
 ## Démarrage rapide
@@ -33,6 +33,21 @@ npm start
 ```
 
 Le serveur écoute par défaut sur [http://localhost:3000](http://localhost:3000) et sert à la fois l'API et l'interface web.
+
+### Configuration de l'envoi d'e-mails
+
+L'application utilise l'API Gmail en OAuth2. Avant de lancer le serveur, définissez les variables d'environnement suivantes :
+
+| Variable | Description |
+| --- | --- |
+| `GMAIL_CLIENT_ID` | Identifiant OAuth2 de l'application Google Cloud. |
+| `GMAIL_CLIENT_SECRET` | Secret OAuth2 associé. |
+| `GMAIL_REFRESH_TOKEN` | Jeton d'actualisation autorisant l'envoi au nom du compte Gmail. |
+| `GMAIL_REDIRECT_URI` | URI de redirection utilisé lors de la génération du jeton (défaut : `http://localhost`). |
+| `GMAIL_SENDER` | Adresse e-mail expéditrice (défaut : `chauffeur.agriholann@gmail.com`). |
+| `DEFAULT_COMPLETION_EMAIL` | Adresse de réception par défaut des comptes rendus de courses. |
+
+Le destinataire peut ensuite être modifié directement depuis l'onglet « Paramètres » de l'administration.
 
 ### Structure des données
 

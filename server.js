@@ -2,7 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
+const { google } = require('googleapis');
 const sqlite3 = require('sqlite3').verbose();
 const { open } = require('sqlite');
 const bcrypt = require('bcryptjs');
@@ -12,6 +12,14 @@ const PORT = process.env.PORT || 3000;
 const DB_PATH = path.join(__dirname, 'db', 'agriholann.db');
 const ATTACHMENTS_DIR = path.join(__dirname, 'storage', 'attachments');
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || 'admin';
+const DEFAULT_COMPLETION_EMAIL = process.env.DEFAULT_COMPLETION_EMAIL || 'laurent.saquet@agriholann.com';
+const GMAIL_CLIENT_ID = process.env.GMAIL_CLIENT_ID || '';
+const GMAIL_CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET || '';
+const GMAIL_REDIRECT_URI = process.env.GMAIL_REDIRECT_URI || 'http://localhost';
+const GMAIL_REFRESH_TOKEN = process.env.GMAIL_REFRESH_TOKEN || '';
+const GMAIL_SENDER = process.env.GMAIL_SENDER || 'chauffeur.agriholann@gmail.com';
+const EMAIL_RECIPIENT_SETTING_KEY = 'completion_email_recipient';
+const EMAIL_ATTACHMENT_NAME = 'bon-transport.jpg';
 
 async function hashPassword(password) {
   const value = password || '';
@@ -33,9 +41,134 @@ async function ensureDirectoryExists(dirPath) {
 
 let db;
 
+let gmailService = null;
+
 async function columnExists(table, column) {
   const pragma = await db.all(`PRAGMA table_info(${table})`);
   return pragma.some((entry) => entry.name === column);
+}
+
+async function getSetting(key) {
+  const row = await db.get('SELECT value FROM settings WHERE key = ?', [key]);
+  return row ? row.value : null;
+}
+
+async function setSettingValue(key, value) {
+  await db.run(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [key, value]
+  );
+}
+
+async function ensureSetting(key, defaultValue) {
+  const existing = await getSetting(key);
+  if (existing === null || existing === undefined) {
+    await setSettingValue(key, defaultValue);
+  }
+}
+
+async function getCompletionEmailRecipient() {
+  const recipient = await getSetting(EMAIL_RECIPIENT_SETTING_KEY);
+  return recipient || DEFAULT_COMPLETION_EMAIL;
+}
+
+function getGmailService() {
+  if (!GMAIL_CLIENT_ID || !GMAIL_CLIENT_SECRET || !GMAIL_REFRESH_TOKEN) {
+    return null;
+  }
+
+  if (!gmailService) {
+    const oAuth2Client = new google.auth.OAuth2(GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REDIRECT_URI);
+    oAuth2Client.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
+    gmailService = google.gmail({ version: 'v1', auth: oAuth2Client });
+  }
+
+  return gmailService;
+}
+
+function buildMimeMessage({ from, to, subject, text, attachmentBuffer, attachmentName, attachmentMimeType }) {
+  if (attachmentBuffer) {
+    const boundary = `===============${Date.now()}==`;
+    const base64Attachment = attachmentBuffer
+      .toString('base64')
+      .replace(/(.{76})/g, '$1\n');
+
+    return [
+      `From: ${from}`,
+      `To: ${to}`,
+      `Subject: ${subject}`,
+      'MIME-Version: 1.0',
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+      '',
+      `--${boundary}`,
+      'Content-Type: text/plain; charset="UTF-8"',
+      'Content-Transfer-Encoding: 7bit',
+      '',
+      text,
+      '',
+      `--${boundary}`,
+      `Content-Type: ${attachmentMimeType || 'application/octet-stream'}; name="${attachmentName}"`,
+      'Content-Transfer-Encoding: base64',
+      `Content-Disposition: attachment; filename="${attachmentName}"`,
+      '',
+      base64Attachment,
+      '',
+      `--${boundary}--`,
+      '',
+    ].join('\n');
+  }
+
+  return [
+    `From: ${from}`,
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset="UTF-8"',
+    'Content-Transfer-Encoding: 7bit',
+    '',
+    text,
+  ].join('\n');
+}
+
+async function sendGmailMessage({
+  to,
+  subject,
+  text,
+  attachmentBuffer = null,
+  attachmentName = EMAIL_ATTACHMENT_NAME,
+  attachmentMimeType = 'application/octet-stream',
+}) {
+  const service = getGmailService();
+
+  if (!service) {
+    throw new Error('Configuration de la messagerie Gmail manquante. Veuillez vérifier les identifiants OAuth.');
+  }
+
+  const rawMessage = buildMimeMessage({
+    from: GMAIL_SENDER,
+    to,
+    subject,
+    text,
+    attachmentBuffer,
+    attachmentName,
+    attachmentMimeType,
+  });
+
+  const encodedMessage = Buffer.from(rawMessage)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+
+  const response = await service.users.messages.send({
+    userId: 'me',
+    requestBody: {
+      raw: encodedMessage,
+    },
+  });
+
+  return response.data;
 }
 
 async function ensureColumn(table, column, definition) {
@@ -58,6 +191,13 @@ function buildAdminInitials(firstName, lastName) {
   const lastInitial = lastName ? lastName.trim().charAt(0) : '';
   const initials = `${firstInitial}${lastInitial}`.toUpperCase();
   return initials || 'AA';
+}
+
+function isValidEmail(email) {
+  if (!email) {
+    return false;
+  }
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 async function generateUniqueAdminIdentifier(firstName, lastName) {
@@ -97,6 +237,10 @@ async function ensureDefaultAdmin() {
      VALUES (?, ?, ?, ?, ?, ?)`,
     [firstName, lastName, identifier, initials, createdAt, passwordHash]
   );
+}
+
+async function ensureDefaultEmailRecipient() {
+  await ensureSetting(EMAIL_RECIPIENT_SETTING_KEY, DEFAULT_COMPLETION_EMAIL);
 }
 
 async function initDatabase() {
@@ -165,6 +309,11 @@ async function initDatabase() {
       initials TEXT NOT NULL,
       created_at TEXT NOT NULL,
       password_hash TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
     );
   `);
 
@@ -270,6 +419,7 @@ async function initDatabase() {
   }
 
   await ensureDefaultAdmin();
+  await ensureDefaultEmailRecipient();
 }
 
 function normalizeActivityDetails(details) {
@@ -350,13 +500,7 @@ async function mergeCreationAndCompletionActivity(courseId, completionUser, comp
   );
 }
 
-const emailTransport = nodemailer.createTransport({
-  streamTransport: true,
-  newline: 'unix',
-  buffer: true,
-});
-
-async function recordEmail(courseId, to, subject, body, attachmentBuffer, attachmentName = 'bon-transport.jpg') {
+async function recordEmail(courseId, to, subject, body, attachmentBuffer, attachmentName = EMAIL_ATTACHMENT_NAME) {
   const createdAt = new Date().toISOString();
   let attachmentPath = null;
 
@@ -372,36 +516,72 @@ async function recordEmail(courseId, to, subject, body, attachmentBuffer, attach
 }
 
 async function sendCompletionEmail(course, driver, completionComments, photoDataUrl) {
-  const to = 'laurent.saquet@agriholann.com';
-  const subject = `[Livraison] ${driver.first_name} ${driver.last_name} - ${course.destination}`;
-  const body = `Le chauffeur ${driver.first_name} ${driver.last_name} a effectué sa course du ${new Date(
-    course.date_time
-  ).toLocaleString('fr-FR')}\n\nCommentaires: ${completionComments || 'Aucun commentaire'}`;
+  const to = await getCompletionEmailRecipient();
 
-  let attachmentBuffer = null;
-  if (photoDataUrl && photoDataUrl.startsWith('data:image')) {
-    const base64Data = photoDataUrl.split(',')[1];
-    attachmentBuffer = Buffer.from(base64Data, 'base64');
+  if (!to) {
+    throw new Error('Aucun destinataire configuré pour les emails de validation.');
   }
 
-  await recordEmail(course.id, to, subject, body, attachmentBuffer);
+  const driverFirstName = driver?.first_name || driver?.firstName || '';
+  const driverLastName = driver?.last_name || driver?.lastName || '';
+  const driverLabel = `${driverFirstName} ${driverLastName}`.trim() || 'Chauffeur';
+  const destination = course.destination || 'Destination inconnue';
+  const dateTime = course.date_time || course.dateTime || new Date().toISOString();
+  const dateLabel = new Date(dateTime).toLocaleString('fr-FR');
+  const comments = completionComments || 'Aucun commentaire';
 
-  await emailTransport.sendMail({
-    from: 'no-reply@agriholann.com',
+  const subject = `[Livraison] ${driverLabel} - ${destination}`;
+  const body = `Le chauffeur ${driverLabel} a effectué sa course du ${dateLabel}\n\nCommentaires: ${comments}`;
+
+  const baseAttachmentName = EMAIL_ATTACHMENT_NAME.includes('.')
+    ? EMAIL_ATTACHMENT_NAME.slice(0, EMAIL_ATTACHMENT_NAME.lastIndexOf('.'))
+    : EMAIL_ATTACHMENT_NAME;
+
+  let attachmentBuffer = null;
+  let attachmentName = EMAIL_ATTACHMENT_NAME;
+  let attachmentMimeType = 'image/jpeg';
+
+  if (photoDataUrl && photoDataUrl.startsWith('data:')) {
+    const [header, data] = photoDataUrl.split(',');
+    const mimeMatch = header.match(/^data:(.*?);base64$/);
+    if (mimeMatch && mimeMatch[1]) {
+      attachmentMimeType = mimeMatch[1];
+      const extension = attachmentMimeType.split('/')[1] || 'jpg';
+      attachmentName = `${baseAttachmentName}.${extension}`;
+    }
+    attachmentBuffer = Buffer.from(data, 'base64');
+  } else if (course.photo_path) {
+    try {
+      attachmentBuffer = await fs.promises.readFile(course.photo_path);
+      const extension = path.extname(course.photo_path) || '.jpg';
+      attachmentName = `${baseAttachmentName}${extension}`;
+      const lowerExtension = extension.toLowerCase();
+      if (lowerExtension === '.png') {
+        attachmentMimeType = 'image/png';
+      } else if (lowerExtension === '.jpg' || lowerExtension === '.jpeg') {
+        attachmentMimeType = 'image/jpeg';
+      } else if (lowerExtension === '.pdf') {
+        attachmentMimeType = 'application/pdf';
+      } else {
+        attachmentMimeType = 'application/octet-stream';
+      }
+    } catch (error) {
+      console.warn('Impossible de lire la photo associée à la course pour la pièce jointe', error);
+    }
+  }
+
+  const response = await sendGmailMessage({
     to,
     subject,
     text: body,
-    attachments: attachmentBuffer
-      ? [
-          {
-            filename: 'bon-transport.jpg',
-            content: attachmentBuffer,
-          },
-        ]
-      : [],
+    attachmentBuffer,
+    attachmentName,
+    attachmentMimeType,
   });
 
-  return { to, subject, body };
+  await recordEmail(course.id, to, subject, body, attachmentBuffer, attachmentName);
+
+  return { to, subject, body, messageId: response?.id || null };
 }
 
 app.use(cors());
@@ -533,6 +713,38 @@ app.post('/api/admins', async (req, res) => {
   } catch (error) {
     console.error('Error creating admin', error);
     res.status(500).json({ message: "Erreur lors de la création du compte administrateur" });
+  }
+});
+
+app.get('/api/settings/email-recipient', async (req, res) => {
+  try {
+    const email = await getCompletionEmailRecipient();
+    res.json({ email });
+  } catch (error) {
+    console.error('Error fetching email recipient setting', error);
+    res
+      .status(500)
+      .json({ message: "Erreur lors de la récupération de l'adresse email de réception" });
+  }
+});
+
+app.put('/api/settings/email-recipient', async (req, res) => {
+  try {
+    const { email } = req.body;
+    const normalizedEmail = typeof email === 'string' ? email.trim() : '';
+
+    if (!isValidEmail(normalizedEmail)) {
+      return res.status(400).json({ message: 'Adresse email invalide.' });
+    }
+
+    await setSettingValue(EMAIL_RECIPIENT_SETTING_KEY, normalizedEmail);
+
+    res.json({ email: normalizedEmail });
+  } catch (error) {
+    console.error('Error updating email recipient setting', error);
+    res
+      .status(500)
+      .json({ message: "Erreur lors de la mise à jour de l'adresse email de réception" });
   }
 });
 
@@ -897,7 +1109,9 @@ app.post('/api/courses/:id/complete', async (req, res) => {
     res.json({ message: 'Course complétée', email: completionEmail });
   } catch (error) {
     console.error('Error completing course', error);
-    res.status(500).json({ message: 'Erreur lors de la validation de la course' });
+    res
+      .status(500)
+      .json({ message: error.message || 'Erreur lors de la validation de la course' });
   }
 });
 

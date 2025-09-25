@@ -25,6 +25,11 @@ const state = {
   currentCourseId: null,
   photoDataUrl: null,
   pendingCompletionComments: '',
+  settings: {
+    emailRecipient: '',
+    loaded: false,
+    saving: false,
+  },
 };
 
 const elements = {
@@ -112,8 +117,10 @@ const elements = {
   driverListContainer: document.getElementById('driver-management-list'),
   adminPlanningTab: document.getElementById('admin-planning-tab'),
   adminArchivesTab: document.getElementById('admin-archives-tab'),
+  adminSettingsTab: document.getElementById('admin-settings-tab'),
   adminPlanningView: document.getElementById('admin-planning-view'),
   adminArchiveView: document.getElementById('admin-archive-view'),
+  adminSettingsView: document.getElementById('admin-settings-view'),
   archiveDriverFilter: document.getElementById('archive-driver-filter'),
   archiveMerchandiseFilter: document.getElementById('archive-merchandise-filter'),
   archivePeriodFilter: document.getElementById('archive-period-filter'),
@@ -121,6 +128,9 @@ const elements = {
   archiveToInput: document.getElementById('archive-to'),
   archiveList: document.getElementById('archive-list'),
   noArchive: document.getElementById('no-archive'),
+  emailSettingsForm: document.getElementById('email-settings-form'),
+  emailRecipientInput: document.getElementById('email-recipient'),
+  emailSettingsStatus: document.getElementById('email-settings-status'),
 };
 
 function showElement(element) {
@@ -333,6 +343,7 @@ function setAdminSession(admin) {
   state.isAdmin = true;
   state.adminFilters = { driverId: 'all', range: 'week' };
   state.archiveFilters = { driverId: 'all', merchandise: 'all', period: 'week', from: null, to: null };
+  state.settings = { emailRecipient: '', loaded: false, saving: false };
   updateArchivePeriodInputs();
 
   hideElement(elements.loginPage);
@@ -343,6 +354,11 @@ function setAdminSession(admin) {
   if (elements.adminIdentifierDisplay) {
     elements.adminIdentifierDisplay.textContent = `${state.currentUser.initials} (${state.currentUser.identifier})`;
   }
+
+  if (elements.emailRecipientInput) {
+    elements.emailRecipientInput.value = '';
+  }
+  resetEmailSettingsStatus();
 
   state.adminView = 'planning';
   switchAdminView('planning');
@@ -515,6 +531,7 @@ function logout() {
   state.archivedCourses = [];
   state.adminFilters = { driverId: 'all', range: 'week' };
   state.archiveFilters = { driverId: 'all', merchandise: 'all', period: 'week', from: null, to: null };
+  state.settings = { emailRecipient: '', loaded: false, saving: false };
   state.activityLog = [];
   state.courseCache.clear();
   elements.lastnameInput.value = '';
@@ -543,6 +560,11 @@ function logout() {
   if (elements.archivePeriodFilter) {
     elements.archivePeriodFilter.value = 'week';
   }
+  if (elements.emailRecipientInput) {
+    elements.emailRecipientInput.value = '';
+  }
+  resetEmailSettingsStatus();
+  state.adminView = 'planning';
   updateAdminRangeButtons();
   updateArchivePeriodInputs();
   showElement(elements.loginPage);
@@ -581,28 +603,40 @@ function switchTab(tab) {
 function switchAdminView(view) {
   state.adminView = view;
 
-  if (!elements.adminPlanningView || !elements.adminArchiveView) {
-    return;
+  const configurations = [
+    { key: 'planning', tab: elements.adminPlanningTab, panel: elements.adminPlanningView },
+    { key: 'archives', tab: elements.adminArchivesTab, panel: elements.adminArchiveView },
+    { key: 'settings', tab: elements.adminSettingsTab, panel: elements.adminSettingsView },
+  ];
+
+  configurations.forEach(({ key, tab, panel }) => {
+    if (!tab || !panel) {
+      return;
+    }
+    if (key === view) {
+      showElement(panel);
+      tab.classList.add('admin-tab--active');
+    } else {
+      hideElement(panel);
+      tab.classList.remove('admin-tab--active');
+    }
+  });
+
+  if (view === 'planning') {
+    updateAdminRangeButtons();
   }
 
-  const planningActive = view === 'planning';
-
-  if (planningActive) {
-    showElement(elements.adminPlanningView);
-    hideElement(elements.adminArchiveView);
-    elements.adminPlanningTab?.classList.add('admin-tab--active');
-    elements.adminArchivesTab?.classList.remove('admin-tab--active');
-  } else {
-    hideElement(elements.adminPlanningView);
-    showElement(elements.adminArchiveView);
-    elements.adminArchivesTab?.classList.add('admin-tab--active');
-    elements.adminPlanningTab?.classList.remove('admin-tab--active');
+  if (view === 'archives') {
     updateArchivePeriodInputs();
     if (!state.archivedCourses.length) {
       loadArchivedCourses();
     } else {
       renderArchivedCourses();
     }
+  }
+
+  if (view === 'settings') {
+    loadEmailSettings();
   }
 }
 
@@ -1020,6 +1054,96 @@ function handleArchiveDatesChange() {
   state.archiveFilters.from = elements.archiveFromInput.value || null;
   state.archiveFilters.to = elements.archiveToInput.value || null;
   loadArchivedCourses();
+}
+
+function resetEmailSettingsStatus() {
+  if (!elements.emailSettingsStatus) {
+    return;
+  }
+  elements.emailSettingsStatus.textContent = '';
+  elements.emailSettingsStatus.classList.add('hidden');
+  elements.emailSettingsStatus.classList.remove('text-green-600', 'text-red-600');
+}
+
+function showEmailSettingsStatus(message, isError = false) {
+  if (!elements.emailSettingsStatus) {
+    return;
+  }
+  elements.emailSettingsStatus.textContent = message;
+  elements.emailSettingsStatus.classList.remove('hidden');
+  elements.emailSettingsStatus.classList.remove('text-green-600', 'text-red-600');
+  elements.emailSettingsStatus.classList.add(isError ? 'text-red-600' : 'text-green-600');
+}
+
+async function loadEmailSettings(force = false) {
+  if (!elements.emailRecipientInput) {
+    return;
+  }
+
+  if (state.settings.loaded && !force) {
+    elements.emailRecipientInput.value = state.settings.emailRecipient;
+    return;
+  }
+
+  try {
+    resetEmailSettingsStatus();
+    const response = await apiFetch('/settings/email-recipient');
+    state.settings.emailRecipient = response.email || '';
+    state.settings.loaded = true;
+    elements.emailRecipientInput.value = state.settings.emailRecipient;
+  } catch (error) {
+    console.error('Erreur lors du chargement de la configuration email', error);
+    showEmailSettingsStatus(error.message || "Impossible de charger l'adresse email.", true);
+  }
+}
+
+async function handleEmailSettingsSubmit(event) {
+  event.preventDefault();
+
+  if (!elements.emailRecipientInput) {
+    return;
+  }
+
+  if (state.settings.saving) {
+    return;
+  }
+
+  const email = elements.emailRecipientInput.value.trim();
+
+  if (!email) {
+    showEmailSettingsStatus('Veuillez renseigner une adresse email.', true);
+    return;
+  }
+
+  const submitButton = elements.emailSettingsForm?.querySelector('button[type="submit"]');
+
+  try {
+    state.settings.saving = true;
+    resetEmailSettingsStatus();
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.classList.add('opacity-50', 'cursor-not-allowed');
+    }
+
+    const response = await apiFetch('/settings/email-recipient', {
+      method: 'PUT',
+      body: JSON.stringify({ email }),
+    });
+
+    state.settings.emailRecipient = response.email || email;
+    state.settings.loaded = true;
+    elements.emailRecipientInput.value = state.settings.emailRecipient;
+    showEmailSettingsStatus('Adresse email mise à jour avec succès.');
+  } catch (error) {
+    console.error("Erreur lors de l'enregistrement de l'adresse email", error);
+    showEmailSettingsStatus(error.message || 'Impossible de mettre à jour cette adresse.', true);
+  } finally {
+    state.settings.saving = false;
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.classList.remove('opacity-50', 'cursor-not-allowed');
+    }
+  }
 }
 
 function renderTodayCourses() {
@@ -1762,6 +1886,7 @@ function registerEventListeners() {
 
   elements.adminPlanningTab?.addEventListener('click', () => switchAdminView('planning'));
   elements.adminArchivesTab?.addEventListener('click', () => switchAdminView('archives'));
+  elements.adminSettingsTab?.addEventListener('click', () => switchAdminView('settings'));
 
   elements.closeAdminLoginModalBtn?.addEventListener('click', closeAdminLoginModal);
   elements.adminLoginForm?.addEventListener('submit', handleAdminLogin);
@@ -1775,6 +1900,7 @@ function registerEventListeners() {
   elements.archiveMerchandiseFilter?.addEventListener('change', handleArchiveFiltersChange);
   elements.archiveFromInput?.addEventListener('change', handleArchiveDatesChange);
   elements.archiveToInput?.addEventListener('change', handleArchiveDatesChange);
+  elements.emailSettingsForm?.addEventListener('submit', handleEmailSettingsSubmit);
 
   window.addEventListener('click', (event) => {
     if (event.target === elements.courseModal) {
