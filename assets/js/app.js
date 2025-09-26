@@ -955,7 +955,11 @@ function ensureSettingsData(tab = state.settings.activeTab) {
   } else if (tab === 'drivers') {
     loadDriverCredentials();
   } else if (tab === 'admins' && state.currentUser?.adminLevel === 'superadmin') {
-    renderAdminManagement();
+    if (!state.admins.length) {
+      loadAdmins();
+    } else {
+      renderAdminManagement();
+    }
   }
 }
 

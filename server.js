@@ -1296,15 +1296,40 @@ app.post('/api/admins/logout', (req, res) => {
   res.status(204).send();
 });
 
+app.get('/api/drivers/credentials', async (req, res) => {
+  try {
+    const sessionInfo = await enforceAdminSession(req, res, {
+      allowRoles: Array.from(ADMIN_ROLES),
+    });
+    if (!sessionInfo) {
+      return;
+    }
+
+    const drivers = await db.all(
+      "SELECT id, first_name, last_name, email, phone, CASE WHEN password_hash IS NULL OR TRIM(password_hash) = '' THEN 0 ELSE 1 END AS has_password FROM drivers ORDER BY last_name ASC, first_name ASC"
+    );
+
+    res.json(drivers);
+  } catch (error) {
+    console.error('Error fetching driver credentials', error);
+    res.status(500).json({ message: 'Erreur lors de la récupération des mots de passe chauffeurs' });
+  }
+});
+
 app.get('/api/drivers/:id', async (req, res) => {
   try {
+    const driverId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(driverId)) {
+      return res.status(400).json({ message: 'Identifiant chauffeur invalide.' });
+    }
+
     const driver = await db.get(
       "SELECT id, first_name, last_name, email, phone, CASE WHEN password_hash IS NULL OR TRIM(password_hash) = '' THEN 0 ELSE 1 END AS has_password FROM drivers WHERE id = ?",
-      [req.params.id]
+      [driverId]
     );
 
     if (!driver) {
-      return res.status(404).json({ message: 'Chauffeur introuvable' });
+      return res.status(404).json({ message: 'Chauffeur introuvable.' });
     }
 
     res.json(driver);
@@ -1354,26 +1379,6 @@ app.post('/api/drivers/login', async (req, res) => {
   } catch (error) {
     console.error('Error validating driver login', error);
     res.status(500).json({ message: 'Erreur lors de la vérification du mot de passe chauffeur' });
-  }
-});
-
-app.get('/api/drivers/credentials', async (req, res) => {
-  try {
-    const sessionInfo = await enforceAdminSession(req, res, {
-      allowRoles: Array.from(ADMIN_ROLES),
-    });
-    if (!sessionInfo) {
-      return;
-    }
-
-    const drivers = await db.all(
-      "SELECT id, first_name, last_name, email, phone, CASE WHEN password_hash IS NULL OR TRIM(password_hash) = '' THEN 0 ELSE 1 END AS has_password FROM drivers ORDER BY last_name ASC, first_name ASC"
-    );
-
-    res.json(drivers);
-  } catch (error) {
-    console.error('Error fetching driver credentials', error);
-    res.status(500).json({ message: 'Erreur lors de la récupération des mots de passe chauffeurs' });
   }
 });
 
