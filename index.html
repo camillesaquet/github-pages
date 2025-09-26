@@ -61,27 +61,22 @@
       class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 hidden"
       aria-hidden="true"
     >
-      <div class="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto slide-in">
+      <div class="relative bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto slide-in">
+        <button
+          id="close-admin-login"
+          class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-2xl"
+          title="Fermer l'accès administration"
+        >
+          <i class="fas fa-times"></i>
+          <span class="sr-only">Fermer la fenêtre d'authentification</span>
+        </button>
         <div class="p-6">
-          <div class="flex justify-between items-start mb-4">
-            <div>
-              <h3 class="text-xl font-semibold text-gray-800">Accès administration</h3>
-              <p class="text-sm text-gray-500">
-                Connectez-vous avec votre identifiant administrateur. Pour toute création de compte, contactez Laurent Saquet.
-              </p>
-            </div>
-            <button id="close-admin-login" class="text-gray-400 hover:text-gray-600 text-2xl" title="Fermer l'accès administration">
-              <i class="fas fa-times"></i>
-              <span class="sr-only">Fermer la fenêtre d'authentification</span>
-            </button>
-          </div>
-
           <div class="space-y-8">
             <section class="space-y-4">
               <div>
-                <h4 class="text-lg font-semibold text-gray-800">Se connecter</h4>
+                <h3 class="text-xl font-semibold text-gray-800">Accès administration</h3>
                 <p class="text-sm text-gray-500">
-                  Identifiant attendu : initiale du prénom suivie du nom de famille (ex. jdupont).
+                  Connectez-vous avec votre identifiant administrateur. Pour toute création de compte, contactez Laurent Saquet.
                 </p>
               </div>
               <form id="admin-login-form" class="space-y-3">
@@ -111,12 +106,7 @@
                   <i class="fas fa-right-to-bracket mr-2"></i> Se connecter
                 </button>
               </form>
-              <div>
-                <h5 class="text-sm font-semibold text-gray-700 mb-2">Comptes disponibles</h5>
-                <div id="admin-accounts" class="space-y-2"></div>
-              </div>
             </section>
-
           </div>
         </div>
       </div>
