@@ -1106,6 +1106,125 @@ app.post('/api/admins', async (req, res) => {
   }
 });
 
+app.put('/api/admins/:id', async (req, res) => {
+  try {
+    const adminId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(adminId)) {
+      return res.status(400).json({ message: 'Identifiant administrateur invalide.' });
+    }
+
+    const sessionInfo = await enforceAdminSession(req, res, { requireSuperAdmin: true });
+    if (!sessionInfo) {
+      return;
+    }
+
+    const existing = await db.get(
+      'SELECT id, first_name, last_name, identifier, role, created_at FROM admins WHERE id = ?',
+      [adminId]
+    );
+
+    if (!existing) {
+      return res.status(404).json({ message: 'Compte administrateur introuvable.' });
+    }
+
+    if (existing.identifier.toLowerCase() === SUPER_ADMIN_IDENTIFIER) {
+      return res.status(400).json({ message: 'Le compte super administrateur ne peut pas être modifié.' });
+    }
+
+    const { firstName, lastName, identifier, role } = req.body || {};
+
+    const trimmedFirstName = typeof firstName === 'string' ? firstName.trim() : '';
+    const trimmedLastName = typeof lastName === 'string' ? lastName.trim() : '';
+    const normalizedIdentifier = typeof identifier === 'string' ? identifier.trim().toLowerCase() : '';
+    const normalizedRole = typeof role === 'string' ? role.trim().toLowerCase() : existing.role;
+
+    if (!trimmedFirstName || !trimmedLastName || !normalizedIdentifier) {
+      return res.status(400).json({ message: 'Prénom, nom et identifiant sont obligatoires.' });
+    }
+
+    if (normalizedIdentifier === SUPER_ADMIN_IDENTIFIER) {
+      return res.status(400).json({ message: "Cet identifiant est réservé au super administrateur." });
+    }
+
+    if (!ADMIN_CREATABLE_ROLES.includes(normalizedRole)) {
+      return res.status(400).json({ message: 'Niveau administrateur invalide.' });
+    }
+
+    const identifierOwner = await db.get(
+      'SELECT id FROM admins WHERE LOWER(identifier) = ? LIMIT 1',
+      [normalizedIdentifier]
+    );
+
+    if (identifierOwner && identifierOwner.id !== adminId) {
+      return res.status(409).json({ message: "Cet identifiant est déjà utilisé par un autre administrateur." });
+    }
+
+    const updates = [];
+    const params = [];
+
+    if (existing.first_name !== trimmedFirstName) {
+      updates.push('first_name = ?');
+      params.push(trimmedFirstName);
+    }
+
+    if (existing.last_name !== trimmedLastName) {
+      updates.push('last_name = ?');
+      params.push(trimmedLastName);
+    }
+
+    if (existing.identifier.toLowerCase() !== normalizedIdentifier) {
+      updates.push('identifier = ?');
+      params.push(normalizedIdentifier);
+    }
+
+    if (existing.role !== normalizedRole) {
+      updates.push('role = ?');
+      params.push(normalizedRole);
+    }
+
+    const initials = buildAdminInitials(trimmedFirstName, trimmedLastName);
+
+    if (existing.first_name !== trimmedFirstName || existing.last_name !== trimmedLastName) {
+      updates.push('initials = ?');
+      params.push(initials);
+    }
+
+    if (!updates.length) {
+      const admin = {
+        id: existing.id,
+        firstName: existing.first_name,
+        lastName: existing.last_name,
+        identifier: existing.identifier,
+        initials,
+        role: existing.role,
+        createdAt: existing.created_at,
+      };
+      return res.json(admin);
+    }
+
+    await db.run(`UPDATE admins SET ${updates.join(', ')} WHERE id = ?`, [...params, adminId]);
+
+    const updated = await db.get(
+      'SELECT id, first_name, last_name, identifier, initials, created_at, role FROM admins WHERE id = ?',
+      [adminId]
+    );
+
+    res.json({
+      id: updated.id,
+      firstName: updated.first_name,
+      lastName: updated.last_name,
+      identifier: updated.identifier,
+      initials: updated.initials,
+      createdAt: updated.created_at,
+      role: updated.role,
+    });
+    broadcastEvent('admins:updated', { action: 'updated', adminId });
+  } catch (error) {
+    console.error('Error updating admin', error);
+    res.status(500).json({ message: "Erreur lors de la mise à jour du compte administrateur" });
+  }
+});
+
 app.delete('/api/admins/:id', async (req, res) => {
   try {
     const adminId = parseInt(req.params.id, 10);

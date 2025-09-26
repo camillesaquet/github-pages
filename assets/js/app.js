@@ -1,5 +1,14 @@
 const API_BASE = '/api';
 
+const ADMIN_EDIT_DEFAULT = Object.freeze({
+  id: null,
+  firstName: '',
+  lastName: '',
+  identifier: '',
+  role: 'standard',
+  saving: false,
+});
+
 const state = {
   driverSearchResults: [],
   adminDrivers: [],
@@ -45,6 +54,7 @@ const state = {
     saving: false,
     activeTab: 'email',
   },
+  adminEdit: { ...ADMIN_EDIT_DEFAULT },
 };
 
 const elements = {
@@ -630,6 +640,9 @@ async function loadAdmins() {
   try {
     const admins = await apiFetch('/admins');
     state.admins = admins.map(normalizeAdmin);
+    if (state.adminEdit.id && !state.admins.some((admin) => admin.id === state.adminEdit.id)) {
+      resetAdminEditState();
+    }
     renderAdminAccounts();
     renderAdminManagement();
   } catch (error) {
@@ -682,6 +695,78 @@ function renderAdminAccounts() {
   elements.adminAccountsList.appendChild(list);
 }
 
+function resetAdminEditState() {
+  Object.assign(state.adminEdit, ADMIN_EDIT_DEFAULT);
+}
+
+function startAdminEdit(admin) {
+  Object.assign(state.adminEdit, {
+    id: admin.id,
+    firstName: admin.firstName || '',
+    lastName: admin.lastName || '',
+    identifier: admin.identifier || '',
+    role: admin.role || 'standard',
+    saving: false,
+  });
+  renderAdminManagement();
+}
+
+function cancelAdminEdit() {
+  resetAdminEditState();
+  renderAdminManagement();
+}
+
+function updateAdminEditField(field, value) {
+  if (!state.adminEdit || state.adminEdit.id === null) {
+    return;
+  }
+  state.adminEdit[field] = value;
+}
+
+async function handleAdminUpdate(event, adminId) {
+  event.preventDefault();
+
+  if (state.adminEdit.id !== adminId) {
+    return;
+  }
+
+  const firstName = (state.adminEdit.firstName || '').trim();
+  const lastName = (state.adminEdit.lastName || '').trim();
+  const identifier = (state.adminEdit.identifier || '').trim();
+  const role = state.adminEdit.role || 'standard';
+
+  if (!firstName || !lastName || !identifier) {
+    setAdminManagementStatus('Veuillez renseigner prénom, nom et identifiant.', true);
+    return;
+  }
+
+  let finalMessage = '';
+  let isError = false;
+
+  try {
+    state.adminEdit.saving = true;
+    renderAdminManagement();
+    setAdminManagementStatus('Mise à jour du compte administrateur...');
+    await apiFetch(`/admins/${adminId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ firstName, lastName, identifier, role }),
+    });
+    await loadAdmins();
+    resetAdminEditState();
+    finalMessage = 'Administrateur mis à jour.';
+  } catch (error) {
+    console.error('Erreur lors de la mise à jour du compte administrateur', error);
+    finalMessage = error.message || 'Impossible de mettre à jour cet administrateur.';
+    isError = true;
+  } finally {
+    state.adminEdit.saving = false;
+    renderAdminManagement();
+    if (finalMessage) {
+      setAdminManagementStatus(finalMessage, isError);
+    }
+  }
+}
+
 function renderAdminManagement() {
   if (!elements.adminManagementSection) {
     return;
@@ -718,6 +803,146 @@ function renderAdminManagement() {
   list.className = 'space-y-3';
 
   state.admins.forEach((admin) => {
+    const isEditing = state.adminEdit.id === admin.id;
+
+    if (isEditing) {
+      const item = document.createElement('li');
+      item.className = 'border border-gray-200 rounded-md px-4 py-4 bg-white shadow-sm space-y-4';
+
+      const header = document.createElement('div');
+      header.className = 'flex flex-wrap items-center gap-2';
+      const title = document.createElement('div');
+      title.className = 'font-medium text-gray-800';
+      title.textContent = `Modifier ${admin.firstName} ${admin.lastName}`;
+      header.appendChild(title);
+
+      const roleBadge = document.createElement('span');
+      roleBadge.className =
+        'inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-xs';
+      roleBadge.textContent = formatAdminLevel(state.adminEdit.role || admin.role);
+      header.appendChild(roleBadge);
+
+      item.appendChild(header);
+
+      const form = document.createElement('form');
+      form.className = 'grid grid-cols-1 md:grid-cols-2 gap-3';
+      form.addEventListener('submit', (event) => handleAdminUpdate(event, admin.id));
+
+      const firstNameField = document.createElement('div');
+      const firstNameInputId = `admin-edit-first-${admin.id}`;
+      const firstNameLabel = document.createElement('label');
+      firstNameLabel.className = 'form-label';
+      firstNameLabel.setAttribute('for', firstNameInputId);
+      firstNameLabel.textContent = 'Prénom';
+      const firstNameInput = document.createElement('input');
+      firstNameInput.id = firstNameInputId;
+      firstNameInput.type = 'text';
+      firstNameInput.required = true;
+      firstNameInput.className = 'form-input';
+      firstNameInput.value = state.adminEdit.firstName;
+      firstNameInput.addEventListener('input', (event) => {
+        updateAdminEditField('firstName', event.target.value);
+      });
+      firstNameField.appendChild(firstNameLabel);
+      firstNameField.appendChild(firstNameInput);
+
+      const lastNameField = document.createElement('div');
+      const lastNameInputId = `admin-edit-last-${admin.id}`;
+      const lastNameLabel = document.createElement('label');
+      lastNameLabel.className = 'form-label';
+      lastNameLabel.setAttribute('for', lastNameInputId);
+      lastNameLabel.textContent = 'Nom';
+      const lastNameInput = document.createElement('input');
+      lastNameInput.id = lastNameInputId;
+      lastNameInput.type = 'text';
+      lastNameInput.required = true;
+      lastNameInput.className = 'form-input';
+      lastNameInput.value = state.adminEdit.lastName;
+      lastNameInput.addEventListener('input', (event) => {
+        updateAdminEditField('lastName', event.target.value);
+      });
+      lastNameField.appendChild(lastNameLabel);
+      lastNameField.appendChild(lastNameInput);
+
+      const identifierField = document.createElement('div');
+      identifierField.className = 'md:col-span-2';
+      const identifierInputId = `admin-edit-identifier-${admin.id}`;
+      const identifierLabel = document.createElement('label');
+      identifierLabel.className = 'form-label';
+      identifierLabel.setAttribute('for', identifierInputId);
+      identifierLabel.textContent = 'Identifiant de connexion';
+      const identifierInput = document.createElement('input');
+      identifierInput.id = identifierInputId;
+      identifierInput.type = 'text';
+      identifierInput.required = true;
+      identifierInput.className = 'form-input font-mono';
+      identifierInput.autocomplete = 'off';
+      identifierInput.value = state.adminEdit.identifier;
+      identifierInput.addEventListener('input', (event) => {
+        const sanitized = event.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+        event.target.value = sanitized;
+        updateAdminEditField('identifier', sanitized);
+      });
+      const identifierHelp = document.createElement('p');
+      identifierHelp.className = 'text-xs text-gray-500 mt-1';
+      identifierHelp.textContent = 'Utilisé pour se connecter (lettres minuscules, chiffres, ".", "-", "_").';
+      identifierField.appendChild(identifierLabel);
+      identifierField.appendChild(identifierInput);
+      identifierField.appendChild(identifierHelp);
+
+      const roleField = document.createElement('div');
+      const roleSelectId = `admin-edit-role-${admin.id}`;
+      const roleLabel = document.createElement('label');
+      roleLabel.className = 'form-label';
+      roleLabel.setAttribute('for', roleSelectId);
+      roleLabel.textContent = "Niveau d'accès";
+      const roleSelect = document.createElement('select');
+      roleSelect.id = roleSelectId;
+      roleSelect.className = 'form-input';
+      ['manager', 'standard'].forEach((value) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = formatAdminLevel(value);
+        roleSelect.appendChild(option);
+      });
+      roleSelect.value = state.adminEdit.role || 'standard';
+      roleSelect.addEventListener('change', (event) => {
+        updateAdminEditField('role', event.target.value);
+        roleBadge.textContent = formatAdminLevel(event.target.value);
+      });
+      roleField.appendChild(roleLabel);
+      roleField.appendChild(roleSelect);
+
+      const actionsRow = document.createElement('div');
+      actionsRow.className = 'md:col-span-2 flex justify-end gap-2';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'btn-secondary';
+      cancelBtn.textContent = 'Annuler';
+      cancelBtn.addEventListener('click', cancelAdminEdit);
+
+      const submitBtn = document.createElement('button');
+      submitBtn.type = 'submit';
+      submitBtn.className = 'btn-primary flex items-center';
+      submitBtn.disabled = state.adminEdit.saving;
+      submitBtn.innerHTML = state.adminEdit.saving
+        ? '<i class="fas fa-spinner fa-spin mr-2"></i>Enregistrement...'
+        : '<i class="fas fa-save mr-2"></i>Enregistrer';
+
+      actionsRow.appendChild(cancelBtn);
+      actionsRow.appendChild(submitBtn);
+
+      form.appendChild(firstNameField);
+      form.appendChild(lastNameField);
+      form.appendChild(identifierField);
+      form.appendChild(roleField);
+      form.appendChild(actionsRow);
+
+      item.appendChild(form);
+      list.appendChild(item);
+      return;
+    }
+
     const item = document.createElement('li');
     item.className =
       'border border-gray-200 rounded-md px-4 py-3 bg-white shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3';
@@ -732,7 +957,7 @@ function renderAdminManagement() {
     `;
 
     const actions = document.createElement('div');
-    actions.className = 'flex items-center gap-2';
+    actions.className = 'flex flex-wrap items-center gap-2';
 
     if (admin.identifier.toLowerCase() === 'lsaquet') {
       const badge = document.createElement('span');
@@ -740,6 +965,13 @@ function renderAdminManagement() {
       badge.textContent = 'Compte principal';
       actions.appendChild(badge);
     } else {
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'btn-secondary text-xs';
+      editBtn.textContent = 'Modifier';
+      editBtn.addEventListener('click', () => startAdminEdit(admin));
+      actions.appendChild(editBtn);
+
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
       deleteBtn.className = 'btn-danger text-xs';
@@ -791,6 +1023,7 @@ async function logout(event) {
   state.driverManagement.error = null;
   state.activityLog = [];
   state.courseCache.clear();
+  resetAdminEditState();
   elements.lastnameInput.value = '';
   elements.driverList.innerHTML = '';
   hideElement(elements.driverDashboard);
