@@ -28,6 +28,7 @@ const state = {
   pendingCompletionComments: '',
   pendingDriverLogin: null,
   driverPasswordError: '',
+  activeDriverTab: 'today',
   driverManagement: {
     expanded: false,
     loading: false,
@@ -164,6 +165,8 @@ const elements = {
   adminPasswordNew: document.getElementById('admin-password-new'),
   adminPasswordFeedback: document.getElementById('admin-password-feedback'),
 };
+
+let eventSource = null;
 
 function showElement(element) {
   if (element) {
@@ -372,7 +375,7 @@ function renderDriverList(drivers) {
 }
 
 async function loginAsDriver(driver, options = {}) {
-  const { skipPasswordCheck = false } = options;
+  const { skipPasswordCheck = false, initialTab = 'today' } = options;
   const normalizedDriver = normalizeDriver(driver);
 
   if (!skipPasswordCheck && normalizedDriver.hasPassword) {
@@ -393,8 +396,10 @@ async function loginAsDriver(driver, options = {}) {
   showElement(elements.driverDashboard);
   hideElement(elements.adminDashboard);
   closeDriverPasswordModal();
-  switchTab('today');
+  state.activeDriverTab = initialTab;
+  switchTab(initialTab);
   await loadDriverCourses();
+  persistSessionState();
 }
 
 function openDriverPasswordModal(driver) {
@@ -495,22 +500,28 @@ async function handleDriverPasswordPrompt(password) {
   await processDriverPassword(password, { inline: false });
 }
 
-function setAdminSession(admin) {
+function setAdminSession(admin, options = {}) {
   const normalized = normalizeAdmin(admin);
+  const defaultAdminFilters = { driverId: 'all', range: 'week' };
+  const defaultArchiveFilters = { driverId: 'all', merchandise: 'all', period: 'week', from: null, to: null };
+  const view = options.view || options.adminView || 'planning';
+  const driverTab = options.driverTab || options.activeDriverTab || 'week';
+  const settingsTab = options.settingsTab || 'email';
+
   state.currentUser = {
     ...normalized,
     role: 'admin',
     adminLevel: normalized.role || 'standard',
-    token: admin.token || null,
+    token: admin.token || state.currentUser?.token || null,
   };
   state.isAdmin = true;
-  state.adminFilters = { driverId: 'all', range: 'week' };
-  state.archiveFilters = { driverId: 'all', merchandise: 'all', period: 'week', from: null, to: null };
+  state.adminFilters = { ...defaultAdminFilters, ...(options.adminFilters || {}) };
+  state.archiveFilters = { ...defaultArchiveFilters, ...(options.archiveFilters || {}) };
   state.settings = {
     emailRecipient: '',
     loaded: false,
     saving: false,
-    activeTab: 'email',
+    activeTab: settingsTab,
   };
   state.driverPasswordManagement = { drivers: [], loading: false, editingDriverId: null };
   state.driverManagement.expanded = false;
@@ -518,7 +529,7 @@ function setAdminSession(admin) {
   state.driverManagement.error = null;
   state.adminDrivers = [];
   state.driverSearchResults = [];
-  updateArchivePeriodInputs();
+  state.activeDriverTab = driverTab;
 
   hideElement(elements.loginPage);
   hideElement(elements.driverDashboard);
@@ -539,10 +550,25 @@ function setAdminSession(admin) {
   renderDriverManagementPanel();
   renderSettingsTabs();
 
-  state.adminView = 'planning';
-  switchAdminView('planning');
+  switchAdminView(view);
   updateAdminRangeButtons();
-  switchTab('week');
+  switchTab(state.activeDriverTab);
+
+  if (elements.archiveMerchandiseFilter) {
+    elements.archiveMerchandiseFilter.value = state.archiveFilters.merchandise || 'all';
+  }
+  if (elements.archivePeriodFilter) {
+    elements.archivePeriodFilter.value = state.archiveFilters.period || 'week';
+  }
+  updateArchivePeriodInputs({ resetValues: false });
+  if (state.archiveFilters.period === 'custom') {
+    if (elements.archiveFromInput) {
+      elements.archiveFromInput.value = state.archiveFilters.from || '';
+    }
+    if (elements.archiveToInput) {
+      elements.archiveToInput.value = state.archiveFilters.to || '';
+    }
+  }
 
   loadAdminDrivers();
   loadAdminCourses();
@@ -552,6 +578,7 @@ function setAdminSession(admin) {
   if (state.currentUser.adminLevel === 'superadmin') {
     loadAdmins();
   }
+  persistSessionState();
 }
 
 function openAdminLoginModal() {
@@ -749,6 +776,7 @@ async function logout(event) {
   state.driverCourses = [];
   state.adminCourses = [];
   state.archivedCourses = [];
+  state.activeDriverTab = 'today';
   state.adminFilters = { driverId: 'all', range: 'week' };
   state.archiveFilters = { driverId: 'all', merchandise: 'all', period: 'week', from: null, to: null };
   state.settings = {
@@ -808,9 +836,11 @@ async function logout(event) {
   updateArchivePeriodInputs();
   showElement(elements.loginPage);
   switchTab('today');
+  clearPersistedSession();
 }
 
 function switchTab(tab) {
+  state.activeDriverTab = tab;
   const tabs = [elements.todayTab, elements.weekTab, elements.newCourseTab];
   tabs.forEach((tabElement) => {
     tabElement.classList.remove('tab-button--active');
@@ -836,6 +866,10 @@ function switchTab(tab) {
     elements.newCourseTab.classList.remove('text-gray-500');
     showElement(elements.newCourseForm);
     elements.adminDriverField.classList.toggle('hidden', !state.isAdmin);
+  }
+
+  if (state.currentUser) {
+    persistSessionState();
   }
 }
 
@@ -876,6 +910,10 @@ function switchAdminView(view) {
 
   if (view === 'settings') {
     ensureSettingsData();
+  }
+
+  if (state.currentUser?.role === 'admin') {
+    persistSessionState();
   }
 }
 
@@ -971,6 +1009,9 @@ function setSettingsTab(tab) {
   if (state.settings.activeTab !== tab) {
     state.settings.activeTab = tab;
     renderSettingsTabs();
+    if (state.currentUser?.role === 'admin') {
+      persistSessionState();
+    }
   }
 
   ensureSettingsData(tab);
@@ -1359,7 +1400,8 @@ function renderArchivedCourses() {
     });
 }
 
-function updateArchivePeriodInputs() {
+function updateArchivePeriodInputs(options = {}) {
+  const { resetValues = true } = options;
   if (!elements.archiveFromInput || !elements.archiveToInput) {
     return;
   }
@@ -1371,8 +1413,13 @@ function updateArchivePeriodInputs() {
   if (!isCustom) {
     elements.archiveFromInput.value = '';
     elements.archiveToInput.value = '';
-    state.archiveFilters.from = null;
-    state.archiveFilters.to = null;
+    if (resetValues) {
+      state.archiveFilters.from = null;
+      state.archiveFilters.to = null;
+    }
+  } else {
+    elements.archiveFromInput.value = state.archiveFilters.from || '';
+    elements.archiveToInput.value = state.archiveFilters.to || '';
   }
 }
 
@@ -1383,6 +1430,9 @@ function handleArchivePeriodChange() {
   state.archiveFilters.period = elements.archivePeriodFilter.value || 'week';
   updateArchivePeriodInputs();
   loadArchivedCourses();
+  if (state.currentUser?.role === 'admin') {
+    persistSessionState();
+  }
 }
 
 function handleArchiveFiltersChange() {
@@ -1393,6 +1443,9 @@ function handleArchiveFiltersChange() {
     state.archiveFilters.merchandise = elements.archiveMerchandiseFilter.value || 'all';
   }
   loadArchivedCourses();
+  if (state.currentUser?.role === 'admin') {
+    persistSessionState();
+  }
 }
 
 function handleArchiveDatesChange() {
@@ -1402,6 +1455,9 @@ function handleArchiveDatesChange() {
   state.archiveFilters.from = elements.archiveFromInput.value || null;
   state.archiveFilters.to = elements.archiveToInput.value || null;
   loadArchivedCourses();
+  if (state.currentUser?.role === 'admin') {
+    persistSessionState();
+  }
 }
 
 function resetEmailSettingsStatus() {
@@ -2446,6 +2502,224 @@ async function confirmPhoto() {
   }
 }
 
+function clearPersistedSession() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  try {
+    window.localStorage.removeItem('agriHolannSession');
+  } catch (error) {
+    console.warn('Impossible de supprimer la session enregistrée', error);
+  }
+}
+
+function persistSessionState() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+
+  if (!state.currentUser) {
+    clearPersistedSession();
+    return;
+  }
+
+  const session = {
+    role: state.currentUser.role,
+    activeDriverTab: state.activeDriverTab || 'today',
+  };
+
+  if (state.currentUser.role === 'driver') {
+    session.user = {
+      id: state.currentUser.id,
+      firstName: state.currentUser.firstName,
+      lastName: state.currentUser.lastName,
+      hasPassword: state.currentUser.hasPassword || false,
+    };
+  } else if (state.currentUser.role === 'admin') {
+    session.user = {
+      id: state.currentUser.id,
+      firstName: state.currentUser.firstName,
+      lastName: state.currentUser.lastName,
+      identifier: state.currentUser.identifier,
+      initials: state.currentUser.initials,
+      adminLevel: state.currentUser.adminLevel,
+    };
+    session.token = state.currentUser.token || null;
+    session.adminView = state.adminView;
+    session.settingsTab = state.settings?.activeTab || 'email';
+    session.adminFilters = { ...state.adminFilters };
+    session.archiveFilters = { ...state.archiveFilters };
+  }
+
+  try {
+    window.localStorage.setItem('agriHolannSession', JSON.stringify(session));
+  } catch (error) {
+    console.warn('Impossible de sauvegarder la session', error);
+  }
+}
+
+function handleRealtimeEvent(event) {
+  if (!event || !event.type) {
+    return;
+  }
+
+  const payload = event.payload || {};
+
+  switch (event.type) {
+    case 'drivers:updated':
+      if (state.isAdmin) {
+        loadAdminDrivers({ force: true });
+        loadDriverCredentials();
+      }
+      if (state.currentUser?.role === 'driver') {
+        if (!payload.driverId || payload.driverId === state.currentUser.id) {
+          loadDriverCourses();
+        }
+      }
+      break;
+    case 'driver-passwords:updated':
+      if (state.isAdmin) {
+        loadDriverCredentials();
+      }
+      if (state.currentUser?.role === 'driver') {
+        if (!payload.driverId || payload.driverId === state.currentUser.id) {
+          loadDriverCourses();
+        }
+      }
+      break;
+    case 'courses:changed':
+      if (state.currentUser?.role === 'driver') {
+        if (!payload.driverId || payload.driverId === state.currentUser.id) {
+          loadDriverCourses();
+        }
+      }
+      if (state.isAdmin) {
+        loadAdminCourses();
+        loadArchivedCourses();
+        loadActivityLog();
+      }
+      break;
+    case 'activity:changed':
+      if (state.isAdmin) {
+        loadActivityLog();
+      }
+      break;
+    case 'admins:updated':
+      if (state.isAdmin && state.currentUser?.adminLevel === 'superadmin') {
+        loadAdmins();
+      }
+      break;
+    case 'settings:email-updated':
+      if (state.isAdmin) {
+        loadEmailRecipient();
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+function setupRealtimeUpdates() {
+  if (typeof window === 'undefined' || !window.EventSource) {
+    console.warn("Les mises à jour en direct ne sont pas supportées par ce navigateur.");
+    return;
+  }
+
+  if (eventSource) {
+    eventSource.close();
+  }
+
+  eventSource = new EventSource(`${API_BASE}/events`);
+
+  eventSource.onmessage = (message) => {
+    if (!message?.data) {
+      return;
+    }
+    try {
+      const event = JSON.parse(message.data);
+      handleRealtimeEvent(event);
+    } catch (error) {
+      console.warn('Impossible de décoder un événement en temps réel', error);
+    }
+  };
+
+  eventSource.onerror = (error) => {
+    console.warn('Connexion temps réel interrompue, nouvelle tentative automatique...', error);
+  };
+}
+
+async function restoreSessionFromStorage() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    showElement(elements.loginPage);
+    return;
+  }
+
+  const raw = window.localStorage.getItem('agriHolannSession');
+  if (!raw) {
+    showElement(elements.loginPage);
+    return;
+  }
+
+  let saved;
+  try {
+    saved = JSON.parse(raw);
+  } catch (error) {
+    console.warn('Session locale invalide, purge.', error);
+    clearPersistedSession();
+    showElement(elements.loginPage);
+    return;
+  }
+
+  if (saved.role === 'admin' && saved.token) {
+    try {
+      const response = await fetch(`${API_BASE}/admins/session`, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Token': saved.token,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Session administrateur invalide');
+      }
+
+      const admin = await response.json();
+      setAdminSession(admin, {
+        view: saved.adminView || 'planning',
+        driverTab: saved.activeDriverTab || 'week',
+        settingsTab: saved.settingsTab || 'email',
+        adminFilters: saved.adminFilters || {},
+        archiveFilters: saved.archiveFilters || {},
+      });
+      return;
+    } catch (error) {
+      console.warn('Impossible de restaurer la session administrateur', error);
+      clearPersistedSession();
+      showElement(elements.loginPage);
+      return;
+    }
+  }
+
+  if (saved.role === 'driver' && saved.user?.id) {
+    try {
+      const driver = await apiFetch(`/drivers/${saved.user.id}`);
+      await loginAsDriver(driver, {
+        skipPasswordCheck: true,
+        initialTab: saved.activeDriverTab || 'today',
+      });
+      return;
+    } catch (error) {
+      console.warn('Impossible de restaurer la session chauffeur', error);
+      clearPersistedSession();
+      showElement(elements.loginPage);
+      return;
+    }
+  }
+
+  clearPersistedSession();
+  showElement(elements.loginPage);
+}
+
 function registerEventListeners() {
   elements.lastnameInput.addEventListener('input', searchDrivers);
   elements.adminLoginBtn.addEventListener('click', openAdminLoginModal);
@@ -2480,6 +2754,9 @@ function registerEventListeners() {
     if (state.isAdmin) {
       loadAdminCourses();
     }
+    if (state.currentUser?.role === 'admin') {
+      persistSessionState();
+    }
   });
   elements.newCourseAdminBtn.addEventListener('click', () => {
     openCourseEditor();
@@ -2495,6 +2772,9 @@ function registerEventListeners() {
         state.adminFilters.range = range || 'week';
         updateAdminRangeButtons();
         loadAdminCourses();
+        if (state.currentUser?.role === 'admin') {
+          persistSessionState();
+        }
       });
     });
   }
@@ -2561,6 +2841,14 @@ function init() {
   renderDriverManagementPanel();
   renderSettingsTabs();
   registerEventListeners();
+  setupRealtimeUpdates();
+  restoreSessionFromStorage();
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+window.addEventListener('beforeunload', () => {
+  if (eventSource) {
+    eventSource.close();
+  }
+});

@@ -94,6 +94,7 @@ const EMAIL_RECIPIENT_SETTING_KEY = 'completion_email_recipient';
 const EMAIL_ATTACHMENT_NAME = 'bon-transport.jpg';
 
 const activeAdminSessions = new Map();
+const sseClients = new Set();
 
 function generateAdminSessionToken() {
   return crypto.randomBytes(32).toString('hex');
@@ -106,6 +107,34 @@ function createAdminSession(admin) {
     expiresAt: Date.now() + ADMIN_SESSION_TTL_MS,
   });
   return token;
+}
+
+function sendSseEvent(client, payload) {
+  try {
+    client.res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  } catch (error) {
+    console.warn('Unable to deliver SSE payload, removing client.', error.message);
+    if (client.heartbeat) {
+      clearInterval(client.heartbeat);
+    }
+    sseClients.delete(client);
+  }
+}
+
+function broadcastEvent(type, payload = {}) {
+  if (!sseClients.size) {
+    return;
+  }
+
+  const message = {
+    type,
+    payload,
+    timestamp: Date.now(),
+  };
+
+  for (const client of Array.from(sseClients)) {
+    sendSseEvent(client, message);
+  }
 }
 
 async function enforceAdminSession(req, res, options = {}) {
@@ -754,6 +783,7 @@ async function logActivity(courseId, action, user, details = null) {
     'INSERT INTO activity_log (course_id, action, user, details, timestamp) VALUES (?, ?, ?, ?, ?)',
     [courseId || null, action, user, normalizeActivityDetails(details), timestamp]
   );
+  broadcastEvent('activity:changed', { action, courseId: courseId || null });
 }
 
 async function mergeCreationAndCompletionActivity(courseId, completionUser, completionDetails = null) {
@@ -886,6 +916,37 @@ app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname)));
 
+app.get('/api/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  if (typeof res.flushHeaders === 'function') {
+    res.flushHeaders();
+  }
+
+  res.write('retry: 3000\n\n');
+
+  const client = {
+    res,
+    heartbeat: setInterval(() => {
+      try {
+        res.write(': heartbeat\n\n');
+      } catch (error) {
+        clearInterval(client.heartbeat);
+        sseClients.delete(client);
+      }
+    }, 30000),
+  };
+
+  sseClients.add(client);
+  sendSseEvent(client, { type: 'connection', timestamp: Date.now() });
+
+  req.on('close', () => {
+    clearInterval(client.heartbeat);
+    sseClients.delete(client);
+  });
+});
+
 app.get('/api/drivers', async (req, res) => {
   try {
     const { search } = req.query;
@@ -931,6 +992,7 @@ app.post('/api/drivers', async (req, res) => {
 
     const driver = await db.get('SELECT id, first_name, last_name, email, phone FROM drivers WHERE id = ?', [result.lastID]);
     res.status(201).json(driver);
+    broadcastEvent('drivers:updated', { action: 'created', driverId: driver.id });
   } catch (error) {
     console.error('Error creating driver', error);
     res.status(500).json({ message: 'Erreur lors de la création du chauffeur' });
@@ -955,6 +1017,7 @@ app.delete('/api/drivers/:id', async (req, res) => {
 
     await db.run('DELETE FROM drivers WHERE id = ?', [driverId]);
     res.status(204).send();
+    broadcastEvent('drivers:updated', { action: 'deleted', driverId: Number(driverId) });
   } catch (error) {
     console.error('Error deleting driver', error);
     res.status(500).json({ message: 'Erreur lors de la suppression du chauffeur' });
@@ -1036,6 +1099,7 @@ app.post('/api/admins', async (req, res) => {
       createdAt: admin.created_at,
       role: admin.role,
     });
+    broadcastEvent('admins:updated', { action: 'created', adminId: admin.id });
   } catch (error) {
     console.error('Error creating admin', error);
     res.status(500).json({ message: "Erreur lors de la création du compte administrateur" });
@@ -1065,6 +1129,7 @@ app.delete('/api/admins/:id', async (req, res) => {
 
     await db.run('DELETE FROM admins WHERE id = ?', [adminId]);
     res.status(204).send();
+    broadcastEvent('admins:updated', { action: 'deleted', adminId });
   } catch (error) {
     console.error('Error deleting admin', error);
     res.status(500).json({ message: "Erreur lors de la suppression du compte administrateur" });
@@ -1195,6 +1260,7 @@ app.get('/api/settings/email-recipient', async (req, res) => {
 
     const settings = await getEmailSettingsFromDatabase();
     res.json({ email: settings.recipient });
+    broadcastEvent('settings:email-updated', {});
   } catch (error) {
     console.error('Error fetching email recipient setting', error);
     res
@@ -1339,6 +1405,29 @@ app.get('/api/drivers/:id', async (req, res) => {
   }
 });
 
+app.get('/api/admins/session', async (req, res) => {
+  try {
+    const sessionInfo = await enforceAdminSession(req, res);
+    if (!sessionInfo) {
+      return;
+    }
+
+    const { admin, token } = sessionInfo;
+    res.json({
+      id: admin.id,
+      firstName: admin.first_name,
+      lastName: admin.last_name,
+      identifier: admin.identifier,
+      initials: admin.initials,
+      role: admin.role,
+      token,
+    });
+  } catch (error) {
+    console.error('Error validating admin session', error);
+    res.status(500).json({ message: 'Erreur lors de la validation de la session administrateur' });
+  }
+});
+
 app.post('/api/drivers/login', async (req, res) => {
   try {
     const { driverId, password } = req.body || {};
@@ -1412,6 +1501,7 @@ app.put('/api/drivers/:id/password', async (req, res) => {
     await db.run('UPDATE drivers SET password_hash = ? WHERE id = ?', [passwordHash, driverId]);
 
     res.json({ id: driverId, hasPassword: true });
+    broadcastEvent('driver-passwords:updated', { driverId, hasPassword: true });
   } catch (error) {
     console.error('Error setting driver password', error);
     res.status(500).json({ message: 'Erreur lors de la mise à jour du mot de passe chauffeur' });
@@ -1439,6 +1529,7 @@ app.delete('/api/drivers/:id/password', async (req, res) => {
 
     await db.run('UPDATE drivers SET password_hash = NULL WHERE id = ?', [driverId]);
     res.status(204).send();
+    broadcastEvent('driver-passwords:updated', { driverId, hasPassword: false });
   } catch (error) {
     console.error('Error removing driver password', error);
     res.status(500).json({ message: 'Erreur lors de la suppression du mot de passe chauffeur' });
@@ -1579,6 +1670,11 @@ app.post('/api/courses', async (req, res) => {
     await logActivity(course.id, 'created', creator, { createdBy: creator });
 
     res.status(201).json(course);
+    broadcastEvent('courses:changed', {
+      action: 'created',
+      courseId: course.id,
+      driverId: course.driver_id,
+    });
   } catch (error) {
     console.error('Error creating course', error);
     res.status(500).json({ message: 'Erreur lors de la création de la course' });
@@ -1625,6 +1721,11 @@ app.put('/api/courses/:id', async (req, res) => {
 
     const updated = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
     res.json(updated);
+    broadcastEvent('courses:changed', {
+      action: 'updated',
+      courseId: updated.id,
+      driverId: updated.driver_id,
+    });
   } catch (error) {
     console.error('Error updating course', error);
     res.status(500).json({ message: 'Erreur lors de la mise à jour de la course' });
@@ -1651,6 +1752,11 @@ app.delete('/api/courses/:id', async (req, res) => {
     await db.run('DELETE FROM courses WHERE id = ?', [courseId]);
 
     res.status(204).send();
+    broadcastEvent('courses:changed', {
+      action: 'deleted',
+      courseId: Number(courseId),
+      driverId: existing.driver_id,
+    });
   } catch (error) {
     console.error('Error deleting course', error);
     res.status(500).json({ message: 'Erreur lors de la suppression de la course' });
@@ -1672,6 +1778,11 @@ app.post('/api/courses/:id/archive', async (req, res) => {
     await logActivity(courseId, 'archived', user || 'LS', 'Course archivée');
 
     res.json({ message: 'Course archivée', archivedAt });
+    broadcastEvent('courses:changed', {
+      action: 'archived',
+      courseId: Number(courseId),
+      driverId: course.driver_id,
+    });
   } catch (error) {
     console.error('Error archiving course', error);
     res.status(500).json({ message: "Erreur lors de l'archivage de la course" });
@@ -1697,6 +1808,11 @@ app.post('/api/courses/:id/unarchive', async (req, res) => {
     await logActivity(courseId, 'restored', user || 'LS', 'Course désarchivée');
 
     res.json({ message: 'Course restaurée' });
+    broadcastEvent('courses:changed', {
+      action: 'restored',
+      courseId: Number(courseId),
+      driverId: course.driver_id,
+    });
   } catch (error) {
     console.error('Error unarchiving course', error);
     res.status(500).json({ message: 'Erreur lors de la restauration de la course' });
@@ -1739,6 +1855,11 @@ app.post('/api/courses/:id/complete', async (req, res) => {
     );
 
     res.json({ message: 'Course complétée', email: completionEmail });
+    broadcastEvent('courses:changed', {
+      action: 'completed',
+      courseId: Number(courseId),
+      driverId: course.driver_id,
+    });
   } catch (error) {
     console.error('Error completing course', error);
     res
