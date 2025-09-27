@@ -54,6 +54,7 @@ const state = {
     saving: false,
     activeTab: 'email',
   },
+  adminManagementView: 'list',
   adminEdit: { ...ADMIN_EDIT_DEFAULT },
 };
 
@@ -170,6 +171,8 @@ const elements = {
   adminManagementPassword: document.getElementById('admin-management-password'),
   adminManagementRole: document.getElementById('admin-management-role'),
   adminManagementStatus: document.getElementById('admin-management-status'),
+  adminManagementTabButtons: document.querySelectorAll('[data-admin-management-tab]'),
+  adminManagementPanels: document.querySelectorAll('[data-admin-management-panel]'),
   adminPasswordForm: document.getElementById('admin-password-form'),
   adminPasswordCurrent: document.getElementById('admin-password-current'),
   adminPasswordNew: document.getElementById('admin-password-new'),
@@ -533,6 +536,7 @@ function setAdminSession(admin, options = {}) {
     saving: false,
     activeTab: settingsTab,
   };
+  state.adminManagementView = options.adminManagementView || 'list';
   state.driverPasswordManagement = { drivers: [], loading: false, editingDriverId: null };
   state.driverManagement.expanded = false;
   state.driverManagement.loading = false;
@@ -767,6 +771,46 @@ async function handleAdminUpdate(event, adminId) {
   }
 }
 
+function renderAdminManagementTabs() {
+  const buttons = elements.adminManagementTabButtons;
+  if (buttons && buttons.length) {
+    buttons.forEach((button) => {
+      const tabKey = button.getAttribute('data-admin-management-tab') || 'list';
+      const isActive = tabKey === state.adminManagementView;
+      if (isActive) {
+        button.classList.add('admin-management-tab--active');
+      } else {
+        button.classList.remove('admin-management-tab--active');
+      }
+      button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+  }
+
+  const panels = elements.adminManagementPanels;
+  if (panels && panels.length) {
+    panels.forEach((panel) => {
+      const panelKey = panel.getAttribute('data-admin-management-panel') || '';
+      if (panelKey === state.adminManagementView) {
+        showElement(panel);
+      } else {
+        hideElement(panel);
+      }
+    });
+  }
+}
+
+function setAdminManagementView(view) {
+  const normalizedView = view === 'create' ? 'create' : 'list';
+  if (state.adminManagementView !== normalizedView) {
+    state.adminManagementView = normalizedView;
+    if (state.currentUser?.role === 'admin') {
+      persistSessionState();
+    }
+  }
+
+  renderAdminManagementTabs();
+}
+
 function renderAdminManagement() {
   if (!elements.adminManagementSection) {
     return;
@@ -778,6 +822,7 @@ function renderAdminManagement() {
   }
 
   showElement(elements.adminManagementSection);
+  renderAdminManagementTabs();
 
   if (elements.adminManagementStatus) {
     elements.adminManagementStatus.textContent = '';
@@ -1017,6 +1062,7 @@ async function logout(event) {
     saving: false,
     activeTab: 'email',
   };
+  state.adminManagementView = 'list';
   state.driverPasswordManagement = { drivers: [], loading: false, editingDriverId: null };
   state.driverManagement.expanded = false;
   state.driverManagement.loading = false;
@@ -1213,6 +1259,10 @@ function renderSettingsTabs() {
         hideElement(panel);
       }
     });
+  }
+
+  if (state.currentUser?.adminLevel === 'superadmin') {
+    renderAdminManagementTabs();
   }
 }
 
@@ -2780,6 +2830,7 @@ function persistSessionState() {
     session.token = state.currentUser.token || null;
     session.adminView = state.adminView;
     session.settingsTab = state.settings?.activeTab || 'email';
+    session.adminManagementView = state.adminManagementView || 'list';
     session.adminFilters = { ...state.adminFilters };
     session.archiveFilters = { ...state.archiveFilters };
   }
@@ -2921,6 +2972,7 @@ async function restoreSessionFromStorage() {
         view: saved.adminView || 'planning',
         driverTab: saved.activeDriverTab || 'week',
         settingsTab: saved.settingsTab || 'email',
+        adminManagementView: saved.adminManagementView || 'list',
         adminFilters: saved.adminFilters || {},
         archiveFilters: saved.archiveFilters || {},
       });
@@ -3042,6 +3094,14 @@ function registerEventListeners() {
       button.addEventListener('click', () => {
         const tabKey = button.getAttribute('data-settings-tab');
         setSettingsTab(tabKey || 'email');
+      });
+    });
+  }
+  if (elements.adminManagementTabButtons && elements.adminManagementTabButtons.length) {
+    elements.adminManagementTabButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const tabKey = button.getAttribute('data-admin-management-tab') || 'list';
+        setAdminManagementView(tabKey);
       });
     });
   }

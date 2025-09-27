@@ -303,6 +303,29 @@
   background-color: rgb(219, 234, 254);
 }
 
+.admin-management-tab {
+  padding: 0.45rem 1rem;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: rgb(75, 85, 99);
+  background-color: transparent;
+  border: 1px solid transparent;
+  transition: color 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
+  cursor: pointer;
+}
+
+.admin-management-tab:hover {
+  color: rgb(37, 99, 235);
+  background-color: rgb(243, 244, 246);
+}
+
+.admin-management-tab--active {
+  color: rgb(37, 99, 235);
+  background-color: rgb(219, 234, 254);
+  border-color: rgb(191, 219, 254);
+}
+
 .filter-chip {
   display: inline-flex;
   align-items: center;
