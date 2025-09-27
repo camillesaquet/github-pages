@@ -84,12 +84,14 @@ const state = {
   displayPreferences: {
     driverLayout: 'cards',
     driverDensity: 'comfortable',
+    driverWeekLayout: 'list',
     adminLayout: 'table',
     adminDensity: 'comfortable',
   },
 };
 
 let adminSearchTimer = null;
+let viewportLockTimer = null;
 
 const elements = {
   loginPage: document.getElementById('login-page'),
@@ -113,6 +115,8 @@ const elements = {
   noCoursesWeek: document.getElementById('no-courses-week'),
   todayList: document.getElementById('today-list'),
   weekList: document.getElementById('week-list'),
+  weekTableWrapper: document.getElementById('week-table-wrapper'),
+  weekSchedule: document.getElementById('week-schedule'),
   adminDriverSelect: document.getElementById('admin-driver-select'),
   adminWeekList: document.getElementById('admin-week-list'),
   adminTableWrapper: document.getElementById('admin-table-wrapper'),
@@ -244,6 +248,7 @@ const elements = {
   adminPasswordFeedback: document.getElementById('admin-password-feedback'),
   driverLayoutButtons: document.querySelectorAll('[data-driver-layout]'),
   driverDensityButtons: document.querySelectorAll('[data-driver-density]'),
+  driverWeekLayoutButtons: document.querySelectorAll('[data-driver-week-layout]'),
   adminLayoutButtons: document.querySelectorAll('[data-admin-layout]'),
   adminDensityButtons: document.querySelectorAll('[data-admin-density]'),
   archiveExportPdfBtn: document.getElementById('archive-export-pdf'),
@@ -411,6 +416,19 @@ function addDays(date, days) {
   return newDate;
 }
 
+function startOfWeek(date) {
+  const newDate = startOfDay(date);
+  const day = newDate.getDay();
+  const diff = (day + 6) % 7;
+  newDate.setDate(newDate.getDate() - diff);
+  return newDate;
+}
+
+function endOfWeek(date) {
+  const start = startOfWeek(date);
+  return addDays(start, 6);
+}
+
 function isSameDay(dateA, dateB) {
   return startOfDay(dateA).getTime() === startOfDay(dateB).getTime();
 }
@@ -442,10 +460,50 @@ function computeAdminIdentifier(firstName, lastName) {
   return `${trimmedFirst.charAt(0)}${trimmedLast}`.toLowerCase();
 }
 
+function isMobileDevice() {
+  if (typeof navigator === 'undefined') {
+    return false;
+  }
+  const coarsePointer = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(pointer: coarse)').matches : false;
+  return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || coarsePointer;
+}
+
+function lockMobileViewport() {
+  if (typeof document === 'undefined') {
+    return;
+  }
+
+  const viewportMeta = document.getElementById('viewport-meta') || document.querySelector('meta[name="viewport"]');
+  if (!viewportMeta) {
+    return;
+  }
+
+  const baseContent = 'width=device-width, initial-scale=1';
+  if (isMobileDevice()) {
+    viewportMeta.setAttribute('content', `${baseContent}, maximum-scale=1, user-scalable=no`);
+    document.body?.classList.add('mobile-viewport-locked');
+  } else {
+    viewportMeta.setAttribute('content', baseContent);
+    document.body?.classList.remove('mobile-viewport-locked');
+  }
+}
+
+function handleViewportResize() {
+  if (viewportLockTimer) {
+    clearTimeout(viewportLockTimer);
+  }
+
+  viewportLockTimer = setTimeout(() => {
+    lockMobileViewport();
+    viewportLockTimer = null;
+  }, 150);
+}
+
 function applyDisplayPreferences() {
   if (elements.driverDashboard) {
     elements.driverDashboard.dataset.courseLayout = state.displayPreferences.driverLayout;
     elements.driverDashboard.dataset.courseDensity = state.displayPreferences.driverDensity;
+    elements.driverDashboard.dataset.weekLayout = state.displayPreferences.driverWeekLayout;
   }
 
   if (elements.adminDashboard) {
@@ -463,6 +521,11 @@ function applyDisplayPreferences() {
     button.classList.toggle('filter-chip--active', isActive);
   });
 
+  elements.driverWeekLayoutButtons?.forEach((button) => {
+    const isActive = button.dataset.driverWeekLayout === state.displayPreferences.driverWeekLayout;
+    button.classList.toggle('filter-chip--active', isActive);
+  });
+
   elements.adminLayoutButtons?.forEach((button) => {
     const isActive = button.dataset.adminLayout === state.displayPreferences.adminLayout;
     button.classList.toggle('filter-chip--active', isActive);
@@ -472,6 +535,20 @@ function applyDisplayPreferences() {
     const isActive = button.dataset.adminDensity === state.displayPreferences.adminDensity;
     button.classList.toggle('filter-chip--active', isActive);
   });
+}
+
+function updateDriverCreationAvailability() {
+  if (!elements.newCourseTab) {
+    return;
+  }
+
+  if (state.isAdmin) {
+    elements.newCourseTab.classList.remove('hidden', 'pointer-events-none', 'opacity-50');
+    elements.newCourseTab.removeAttribute('aria-hidden');
+  } else {
+    elements.newCourseTab.classList.add('hidden');
+    elements.newCourseTab.setAttribute('aria-hidden', 'true');
+  }
 }
 
 function formatAdminLevel(role) {
@@ -556,6 +633,7 @@ async function loginAsDriver(driver, options = {}) {
     initials: computeInitials(normalizedDriver.firstName, normalizedDriver.lastName),
   };
   state.isAdmin = false;
+  updateDriverCreationAvailability();
   elements.driverNameDisplay.textContent = `${normalizedDriver.firstName} ${normalizedDriver.lastName}`;
   hideElement(elements.loginPage);
   showElement(elements.driverDashboard);
@@ -712,6 +790,8 @@ function setAdminSession(admin, options = {}) {
   hideElement(elements.driverDashboard);
   showElement(elements.adminDashboard);
   closeAdminLoginModal();
+
+  updateDriverCreationAvailability();
 
   applyDisplayPreferences();
   syncAdminFiltersToInputs();
@@ -1238,6 +1318,7 @@ async function logout(event) {
   state.courseCache.clear();
   resetAdminEditState();
   resetMessagingState();
+  updateDriverCreationAvailability();
   elements.lastnameInput.value = '';
   elements.driverList.innerHTML = '';
   hideElement(elements.driverDashboard);
@@ -1286,7 +1367,8 @@ async function logout(event) {
   clearPersistedSession();
 }
 
-function switchTab(tab) {
+function switchTab(requestedTab) {
+  const tab = !state.isAdmin && requestedTab === 'new-course' ? 'week' : requestedTab;
   state.activeDriverTab = tab;
   const tabs = [elements.todayTab, elements.weekTab, elements.newCourseTab];
   tabs.forEach((tabElement) => {
@@ -1915,6 +1997,17 @@ function handleDriverDensityChange(event) {
   state.displayPreferences.driverDensity = density;
   applyDisplayPreferences();
   renderTodayCourses();
+  renderWeekCourses();
+  persistSessionState();
+}
+
+function handleDriverWeekLayoutChange(event) {
+  const layout = event.target.getAttribute('data-driver-week-layout');
+  if (!layout) {
+    return;
+  }
+  state.displayPreferences.driverWeekLayout = layout;
+  applyDisplayPreferences();
   renderWeekCourses();
   persistSessionState();
 }
@@ -2612,6 +2705,7 @@ function renderTodayCourses() {
         container.className = `course-item course-item--list px-4 py-3 ${
           archived ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
         }`;
+        container.classList.add('animate-fade-up');
         container.setAttribute('aria-disabled', archived ? 'true' : 'false');
         container.innerHTML = `
           <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 w-full">
@@ -2636,6 +2730,7 @@ function renderTodayCourses() {
       } else {
         const baseClasses = 'course-item bg-white p-4 rounded-lg shadow-sm border border-gray-200 transition';
         container.className = `${baseClasses} ${archived ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`;
+        container.classList.add('animate-fade-up');
         container.setAttribute('aria-disabled', archived ? 'true' : 'false');
         container.innerHTML = `
           <div class="flex justify-between items-start">
@@ -2693,13 +2788,42 @@ function renderTodayCourses() {
 
 function renderWeekCourses() {
   elements.weekList.innerHTML = '';
+  if (elements.weekSchedule) {
+    elements.weekSchedule.innerHTML = '';
+  }
 
   if (!state.driverCourses.length) {
     showElement(elements.noCoursesWeek);
+    if (elements.weekTableWrapper) {
+      hideElement(elements.weekTableWrapper);
+    }
+    if (elements.weekSchedule) {
+      hideElement(elements.weekSchedule);
+    }
     return;
   }
 
   hideElement(elements.noCoursesWeek);
+
+  const layout = state.displayPreferences.driverWeekLayout || 'list';
+
+  if (layout === 'schedule') {
+    if (elements.weekTableWrapper) {
+      hideElement(elements.weekTableWrapper);
+    }
+    if (elements.weekSchedule) {
+      showElement(elements.weekSchedule);
+      renderWeekSchedule();
+    }
+    return;
+  }
+
+  if (elements.weekTableWrapper) {
+    showElement(elements.weekTableWrapper);
+  }
+  if (elements.weekSchedule) {
+    hideElement(elements.weekSchedule);
+  }
 
   state.driverCourses
     .slice()
@@ -2708,6 +2832,7 @@ function renderWeekCourses() {
       const row = document.createElement('tr');
       const archived = course.isArchived;
       row.className = `${archived ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'hover:bg-gray-50 cursor-pointer'} driver-week-row`;
+      row.classList.add('animate-fade-up');
       row.setAttribute('aria-disabled', archived ? 'true' : 'false');
 
       const statusMeta = getCourseStatusMeta(course, {
@@ -2741,7 +2866,7 @@ function renderWeekCourses() {
 
       if (course.status === 'issue_reported' && course.issueReportComment) {
         const detailRow = document.createElement('tr');
-        detailRow.className = 'bg-red-50';
+        detailRow.className = 'bg-red-50 animate-fade-up';
         const cell = document.createElement('td');
         cell.colSpan = 5;
         cell.className = 'px-6 py-3 text-sm text-red-700 border-t border-red-100';
@@ -2762,6 +2887,108 @@ function renderWeekCourses() {
         });
       }
     });
+}
+
+function renderWeekSchedule() {
+  if (!elements.weekSchedule) {
+    return;
+  }
+
+  const today = new Date();
+  const weekStart = startOfWeek(today);
+  const weekEnd = endOfWeek(today);
+  const scheduleContainer = elements.weekSchedule;
+  scheduleContainer.innerHTML = '';
+
+  const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+  const coursesByDay = new Map();
+
+  state.driverCourses.forEach((course) => {
+    const courseDate = startOfDay(course.date);
+    if (courseDate < weekStart || courseDate > weekEnd) {
+      return;
+    }
+    const key = courseDate.toISOString();
+    if (!coursesByDay.has(key)) {
+      coursesByDay.set(key, []);
+    }
+    coursesByDay.get(key).push(course);
+  });
+
+  days.forEach((dayDate) => {
+    const dayKey = startOfDay(dayDate).toISOString();
+    const dayCourses = (coursesByDay.get(dayKey) || []).slice().sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    const dayCard = document.createElement('div');
+    dayCard.className = 'week-schedule-day animate-fade-up';
+
+    const header = document.createElement('div');
+    header.className = 'week-schedule-day__header';
+    const dayLabel = dayDate.toLocaleDateString('fr-FR', { weekday: 'long' });
+    const dateLabel = dayDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+    header.innerHTML = `
+      <div>
+        <div class="week-schedule-day__title">${dayLabel}</div>
+        <div class="week-schedule-day__date">${dateLabel}</div>
+      </div>
+      ${isSameDay(dayDate, today) ? "<span class='text-xs font-semibold text-green-600 bg-green-50 px-2 py-1 rounded-full'>Aujourd'hui</span>" : ''}
+    `;
+    dayCard.appendChild(header);
+
+    if (!dayCourses.length) {
+      const empty = document.createElement('div');
+      empty.className = 'week-schedule-slot week-schedule-slot__empty';
+      empty.textContent = 'Aucune course planifiée';
+      dayCard.appendChild(empty);
+    } else {
+      dayCourses.forEach((course) => {
+        const archived = course.isArchived;
+        const departure = escapeHtml(course.departure || '');
+        const destination = escapeHtml(course.destination || '');
+        const merchandise = escapeHtml(course.merchandise || '');
+        const comments = course.comments ? escapeHtml(course.comments) : '';
+        const issueComment = course.issueReportComment ? escapeHtml(course.issueReportComment) : '';
+        const statusMeta = getCourseStatusMeta(course, {
+          archivedClass: 'bg-gray-300 text-gray-700',
+        });
+
+        const slot = document.createElement('div');
+        slot.className = `week-schedule-slot ${archived ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`;
+        slot.setAttribute('role', archived ? 'group' : 'button');
+        slot.setAttribute('aria-disabled', archived ? 'true' : 'false');
+        slot.innerHTML = `
+          <div class="flex items-center justify-between text-xs text-gray-500">
+            <span><i class="fas fa-clock mr-1"></i>${formatTime(course.date)}</span>
+            <span class="px-2 py-0.5 rounded-full ${statusMeta.className}">${statusMeta.label}</span>
+          </div>
+          <div class="week-schedule-slot__route">${departure} → ${destination}</div>
+          <div class="week-schedule-slot__meta">${merchandise || '—'}</div>
+          ${comments ? `<div class="text-xs text-gray-600"><i class="fas fa-comment mr-1"></i>${comments}</div>` : ''}
+          ${issueComment ? `<div class="text-xs text-red-600 bg-red-50 border border-red-200 rounded-md px-2 py-1"><i class="fas fa-circle-exclamation mr-1"></i>${issueComment}</div>` : ''}
+        `;
+
+        if (!archived) {
+          slot.addEventListener('click', () => openCourseModal(course.id));
+        }
+
+        if (!archived && course.status !== 'completed' && course.status !== 'issue_reported') {
+          const action = document.createElement('button');
+          action.type = 'button';
+          action.className = 'mt-2 inline-flex items-center gap-1 text-xs font-medium text-red-600 hover:text-red-700';
+          action.innerHTML = '<i class="fas fa-exclamation-triangle"></i>Signaler un problème';
+          action.addEventListener('click', (event) => {
+            event.stopPropagation();
+            openCourseIssueModal(course.id);
+          });
+          slot.appendChild(action);
+        }
+
+        dayCard.appendChild(slot);
+      });
+    }
+
+    scheduleContainer.appendChild(dayCard);
+  });
 }
 
 function renderAdminCourses() {
@@ -3033,6 +3260,11 @@ function renderActivityLog() {
 
 async function handleAddCourse(event) {
   event.preventDefault();
+
+  if (!state.isAdmin) {
+    alert("La création de courses est réservée à l'administration.");
+    return;
+  }
 
   try {
     const courseDate = elements.courseDate.value;
@@ -3359,13 +3591,116 @@ function stopCameraStream() {
   }
 }
 
-function updateCameraFacingSelect() {
-  if (elements.cameraFacingSelect) {
-    elements.cameraFacingSelect.value = state.cameraFacingMode;
+function stopStream(stream) {
+  if (!stream) {
+    return;
+  }
+  stream.getTracks().forEach((track) => track.stop());
+}
+
+function isRearCameraTrack(track) {
+  if (!track) {
+    return false;
+  }
+  const settings = track.getSettings ? track.getSettings() : {};
+  const facingMode = settings.facingMode ? settings.facingMode.toLowerCase() : '';
+  if (facingMode === 'environment' || facingMode === 'rear') {
+    return true;
+  }
+  const label = (track.label || '').toLowerCase();
+  return label.includes('back') || label.includes('rear') || label.includes('arrière') || label.includes('arriere') || label.includes('environment');
+}
+
+async function enumerateRearCameraDevice() {
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    return null;
+  }
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const videoDevices = devices.filter((device) => device.kind === 'videoinput');
+  if (!videoDevices.length) {
+    return null;
+  }
+  const prioritized = videoDevices.find((device) => {
+    const label = (device.label || '').toLowerCase();
+    return label.includes('back') || label.includes('rear') || label.includes('arrière') || label.includes('arriere') || label.includes('environment');
+  });
+  return prioritized || videoDevices[0];
+}
+
+async function requestRearCameraStream() {
+  const baseConstraints = [
+    { video: { facingMode: { exact: 'environment' } } },
+    { video: { facingMode: { ideal: 'environment' } } },
+  ];
+  let lastError = null;
+
+  for (const constraints of baseConstraints) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const track = stream.getVideoTracks()[0];
+      if (isRearCameraTrack(track)) {
+        return stream;
+      }
+
+      const device = await enumerateRearCameraDevice();
+      if (device) {
+        stopStream(stream);
+        const explicitStream = await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { exact: device.deviceId } },
+        });
+        return explicitStream;
+      }
+
+      return stream;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  const fallbackDevice = await enumerateRearCameraDevice();
+  if (fallbackDevice) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: fallbackDevice.deviceId } },
+      });
+      return stream;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("Impossible d'accéder à la caméra arrière");
+}
+
+function updateCameraWarning(usingRearCamera) {
+  const container = elements.photoPlaceholder?.parentElement;
+  if (!container) {
+    return;
+  }
+
+  const existing = container.querySelector('[data-camera-warning]');
+  if (usingRearCamera) {
+    existing?.remove();
+    return;
+  }
+
+  const warning = existing || document.createElement('div');
+  warning.dataset.cameraWarning = 'true';
+  warning.className = existing
+    ? warning.className
+    : 'mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 animate-fade-up';
+  warning.innerHTML =
+    '<i class="fas fa-circle-info mr-1"></i>La caméra arrière n’a pas pu être confirmée. Assurez-vous d’utiliser l’objectif principal de votre téléphone.';
+  if (!existing) {
+    container.appendChild(warning);
   }
 }
 
-async function startCameraStream({ fallback = true } = {}) {
+function clearCameraWarning() {
+  updateCameraWarning(true);
+}
+
+async function startCameraStream() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     if (elements.photoPlaceholder) {
       elements.photoPlaceholder.innerHTML = `
@@ -3377,54 +3712,42 @@ async function startCameraStream({ fallback = true } = {}) {
     return;
   }
 
-  const desiredFacingMode = state.cameraFacingMode === 'user' ? 'user' : 'environment';
-  const constraints = { video: { facingMode: desiredFacingMode } };
-
   stopCameraStream();
+  if (elements.photoPlaceholder) {
+    elements.photoPlaceholder.innerHTML = `
+      <i class="fas fa-camera text-4xl mb-2"></i>
+      <p>Préparation de l'appareil photo...</p>
+    `;
+  }
   showElement(elements.photoPlaceholder);
   hideElement(elements.camera);
 
   try {
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    const stream = await requestRearCameraStream();
     elements.camera.srcObject = stream;
     await elements.camera.play();
+    const track = stream.getVideoTracks()[0];
+    state.cameraFacingMode = 'environment';
+    persistSessionState();
     hideElement(elements.photoPlaceholder);
     showElement(elements.camera);
+    updateCameraWarning(isRearCameraTrack(track));
   } catch (error) {
-    console.warn('Accès caméra refusé ou indisponible avec facingMode', desiredFacingMode, error);
-    if (fallback && desiredFacingMode === 'environment') {
-      state.cameraFacingMode = 'user';
-      updateCameraFacingSelect();
-      persistSessionState();
-      await startCameraStream({ fallback: false });
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      elements.camera.srcObject = stream;
-      await elements.camera.play();
-      state.cameraFacingMode = 'user';
-      updateCameraFacingSelect();
-      persistSessionState();
-      hideElement(elements.photoPlaceholder);
-      showElement(elements.camera);
-    } catch (innerError) {
-      console.error('Impossible de démarrer la caméra', innerError);
-      if (elements.photoPlaceholder) {
-        elements.photoPlaceholder.innerHTML = `
-          <i class="fas fa-camera-slash text-4xl mb-2"></i>
-          <p>Impossible d\'accéder à la caméra.</p>
-        `;
-        showElement(elements.photoPlaceholder);
-      }
+    console.error('Impossible de démarrer la caméra arrière', error);
+    clearCameraWarning();
+    if (elements.photoPlaceholder) {
+      elements.photoPlaceholder.innerHTML = `
+        <i class="fas fa-camera-slash text-4xl mb-2"></i>
+        <p>Impossible d'accéder à la caméra arrière.</p>
+        <p class="text-sm mt-2 text-gray-500">Vérifiez les autorisations de votre navigateur ou l'état de la caméra.</p>
+      `;
+      showElement(elements.photoPlaceholder);
     }
   }
 }
 
 function setCameraFacingMode(mode, { persist = true, restart = true } = {}) {
-  const normalized = mode === 'user' ? 'user' : 'environment';
-  state.cameraFacingMode = normalized;
-  updateCameraFacingSelect();
+  state.cameraFacingMode = 'environment';
   if (persist) {
     persistSessionState();
   }
@@ -3448,12 +3771,12 @@ function openPhotoModal() {
       <p>Initialisation de la caméra…</p>
     `;
   }
-  updateCameraFacingSelect();
   startCameraStream();
 }
 
 function closePhotoModal() {
   stopCameraStream();
+  clearCameraWarning();
 
   hideElement(elements.photoModal);
   state.photoDataUrl = null;
@@ -4460,6 +4783,9 @@ function registerEventListeners() {
   elements.driverDensityButtons?.forEach((button) => {
     button.addEventListener('click', handleDriverDensityChange);
   });
+  elements.driverWeekLayoutButtons?.forEach((button) => {
+    button.addEventListener('click', handleDriverWeekLayoutChange);
+  });
   elements.adminLayoutButtons?.forEach((button) => {
     button.addEventListener('click', handleAdminLayoutChange);
   });
@@ -4543,10 +4869,16 @@ function init() {
   renderDriverManagementPanel();
   renderSettingsTabs();
   applyDisplayPreferences();
+  lockMobileViewport();
   registerEventListeners();
   setupRealtimeUpdates();
   resetMessagingState();
   restoreSessionFromStorage();
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', handleViewportResize);
+    window.addEventListener('orientationchange', lockMobileViewport);
+  }
 }
 
 document.addEventListener('DOMContentLoaded', init);

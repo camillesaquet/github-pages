@@ -1,3 +1,29 @@
+.mobile-viewport-locked {
+  overscroll-behavior: contain;
+}
+
+body.bg-gray-50 {
+  touch-action: manipulation;
+  background-image: linear-gradient(180deg, #f9fafb 0%, #ecfdf5 100%);
+  min-height: 100vh;
+  color: rgb(31, 41, 55);
+}
+
+.animate-fade-up {
+  animation: fadeUp 0.4s ease both;
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .fade-in {
   animation: fadeIn 0.3s ease-in-out;
 }
@@ -36,6 +62,15 @@
 .driver-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+.course-item {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+.course-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 20px 25px -15px rgba(15, 118, 110, 0.4);
 }
 
 .course-item:hover {
@@ -345,6 +380,93 @@
   background-color: rgb(37, 99, 235);
   border-color: rgb(37, 99, 235);
   color: #fff;
+}
+
+.week-schedule-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+@media (min-width: 640px) {
+  .week-schedule-grid {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+}
+
+.week-schedule-day {
+  background: #fff;
+  border-radius: 0.75rem;
+  border: 1px solid rgb(229, 231, 235);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  box-shadow: 0 15px 35px -20px rgba(22, 101, 52, 0.3);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.week-schedule-day:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 25px 45px -25px rgba(22, 101, 52, 0.35);
+}
+
+.week-schedule-day__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.week-schedule-day__title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.week-schedule-day__date {
+  font-size: 0.75rem;
+  color: rgb(107, 114, 128);
+}
+
+.week-schedule-slot {
+  background: rgba(236, 253, 245, 0.6);
+  border: 1px solid rgba(22, 163, 74, 0.25);
+  border-radius: 0.75rem;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.25rem;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.week-schedule-slot:hover {
+  border-color: rgba(22, 163, 74, 0.6);
+  background: rgba(220, 252, 231, 0.9);
+}
+
+.week-schedule-slot__route {
+  font-weight: 600;
+  color: rgb(30, 64, 175);
+}
+
+.week-schedule-slot__meta {
+  font-size: 0.85rem;
+  color: rgb(55, 65, 81);
+}
+
+.week-schedule-slot__status {
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: rgb(21, 128, 61);
+}
+
+.week-schedule-slot__empty {
+  font-size: 0.85rem;
+  color: rgb(107, 114, 128);
+  text-align: center;
+  padding: 1rem 0.5rem;
 }
 
 .today-list {

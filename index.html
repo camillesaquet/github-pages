@@ -2,7 +2,7 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta id="viewport-meta" name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Agri Holann - Gestion des chauffeurs</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link
@@ -14,7 +14,7 @@
     />
     <link rel="stylesheet" href="assets/css/styles.css" />
   </head>
-  <body class="bg-gray-50 font-sans">
+  <body class="bg-gray-50 font-sans antialiased">
     <div id="login-page" class="min-h-screen flex flex-col justify-center items-center p-4">
       <div class="w-full max-w-md bg-white rounded-lg shadow-md overflow-hidden fade-in">
         <div class="bg-green-600 py-4 px-6">
@@ -198,30 +198,35 @@
         <div class="flex border-b border-gray-200 mb-6">
           <button id="today-tab" class="tab-button tab-button--active">Aujourd'hui</button>
           <button id="week-tab" class="tab-button">Semaine</button>
-          <button id="new-course-tab" class="tab-button ml-auto">
+          <button id="new-course-tab" class="tab-button ml-auto" data-admin-only="true">
             <i class="fas fa-plus mr-1"></i> Nouvelle course
           </button>
         </div>
 
         <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
-          <div class="flex items-center gap-2">
-            <span class="text-sm font-medium text-gray-600">Affichage</span>
-            <div class="flex gap-2">
-              <button type="button" class="filter-chip" data-driver-layout="cards">
-                <i class="fas fa-th-large mr-1"></i> Cartes
-              </button>
-              <button type="button" class="filter-chip" data-driver-layout="list">
-                <i class="fas fa-list mr-1"></i> Liste
-              </button>
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-medium text-gray-600">Aujourd'hui</span>
+              <div class="flex gap-2">
+                <button type="button" class="filter-chip" data-driver-layout="cards">
+                  <i class="fas fa-th-large mr-1"></i> Cartes
+                </button>
+                <button type="button" class="filter-chip" data-driver-layout="list">
+                  <i class="fas fa-list mr-1"></i> Liste
+                </button>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-medium text-gray-600">Lisibilité</span>
+              <div class="flex gap-2">
+                <button type="button" class="filter-chip" data-driver-density="comfortable">Standard</button>
+                <button type="button" class="filter-chip" data-driver-density="contrast">Contraste</button>
+              </div>
             </div>
           </div>
-          <div class="flex items-center gap-2">
-            <span class="text-sm font-medium text-gray-600">Lisibilité</span>
-            <div class="flex gap-2">
-              <button type="button" class="filter-chip" data-driver-density="comfortable">Standard</button>
-              <button type="button" class="filter-chip" data-driver-density="contrast">Contraste</button>
-            </div>
-          </div>
+          <p class="text-xs text-gray-500 max-w-xs leading-snug">
+            Ajustez l'affichage pour rendre vos informations plus confortables lors de vos déplacements.
+          </p>
         </div>
 
         <div id="today-courses">
@@ -235,7 +240,18 @@
 
         <div id="week-courses" class="hidden">
           <h2 class="section-title">Vos courses cette semaine</h2>
-          <div class="overflow-x-auto">
+          <div class="flex flex-wrap items-center gap-2 mb-4">
+            <span class="text-sm font-medium text-gray-600">Disposition</span>
+            <div class="flex gap-2">
+              <button type="button" class="filter-chip" data-driver-week-layout="list">
+                <i class="fas fa-table-list mr-1"></i> Liste
+              </button>
+              <button type="button" class="filter-chip" data-driver-week-layout="schedule">
+                <i class="fas fa-calendar-week mr-1"></i> Emploi du temps
+              </button>
+            </div>
+          </div>
+          <div id="week-table-wrapper" class="overflow-x-auto">
             <table class="responsive-table min-w-full divide-y divide-gray-200">
               <thead class="bg-gray-50">
                 <tr>
@@ -249,6 +265,7 @@
               <tbody id="week-list" class="bg-white divide-y divide-gray-200"></tbody>
             </table>
           </div>
+          <div id="week-schedule" class="hidden week-schedule-grid"></div>
           <div id="no-courses-week" class="empty-state hidden">
             <i class="fas fa-calendar-week text-4xl mb-3 opacity-30"></i>
             <p>Aucune course prévue cette semaine</p>
@@ -760,17 +777,9 @@
             <div class="flex flex-wrap items-center justify-between mb-3 gap-2">
               <div class="flex items-center gap-2 text-sm text-gray-600">
                 <i class="fas fa-sync-alt text-gray-400"></i>
-                <span>Sélectionner la caméra</span>
+                <span>La caméra arrière est utilisée automatiquement.</span>
               </div>
-              <div class="flex items-center gap-2">
-                <button id="switch-camera" type="button" class="btn-tertiary text-sm">
-                  <i class="fas fa-exchange-alt mr-2"></i> Inverser
-                </button>
-                <select id="camera-facing-select" class="form-input text-sm w-40">
-                  <option value="environment">Caméra arrière</option>
-                  <option value="user">Caméra avant</option>
-                </select>
-              </div>
+              <p class="text-xs text-gray-500">Assurez-vous que le document est bien éclairé.</p>
             </div>
             <div class="bg-gray-100 rounded-md h-64 flex items-center justify-center mb-3">
               <video id="camera" class="w-full h-full object-cover rounded-md hidden" playsinline></video>
