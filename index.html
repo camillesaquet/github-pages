@@ -61,27 +61,22 @@
       class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 hidden"
       aria-hidden="true"
     >
-      <div class="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto slide-in">
+      <div class="relative bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto slide-in">
+        <button
+          id="close-admin-login"
+          class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-2xl"
+          title="Fermer l'accès administration"
+        >
+          <i class="fas fa-times"></i>
+          <span class="sr-only">Fermer la fenêtre d'authentification</span>
+        </button>
         <div class="p-6">
-          <div class="flex justify-between items-start mb-4">
-            <div>
-              <h3 class="text-xl font-semibold text-gray-800">Accès administration</h3>
-              <p class="text-sm text-gray-500">
-                Connectez-vous avec votre identifiant ou créez un nouveau compte administrateur.
-              </p>
-            </div>
-            <button id="close-admin-login" class="text-gray-400 hover:text-gray-600">
-              <i class="fas fa-times"></i>
-              <span class="sr-only">Fermer la fenêtre d'authentification</span>
-            </button>
-          </div>
-
           <div class="space-y-8">
             <section class="space-y-4">
               <div>
-                <h4 class="text-lg font-semibold text-gray-800">Se connecter</h4>
+                <h3 class="text-xl font-semibold text-gray-800">Accès administration</h3>
                 <p class="text-sm text-gray-500">
-                  Identifiant attendu : initiale du prénom suivie du nom de famille (ex. jdupont).
+                  Connectez-vous avec votre identifiant administrateur. Pour toute création de compte, contactez Laurent Saquet.
                 </p>
               </div>
               <form id="admin-login-form" class="space-y-3">
@@ -111,52 +106,74 @@
                   <i class="fas fa-right-to-bracket mr-2"></i> Se connecter
                 </button>
               </form>
-              <div>
-                <h5 class="text-sm font-semibold text-gray-700 mb-2">Comptes disponibles</h5>
-                <div id="admin-accounts" class="space-y-2"></div>
-              </div>
-            </section>
-
-            <section class="space-y-4 border-t border-gray-200 pt-6">
-              <div>
-                <h4 class="text-lg font-semibold text-gray-800">Créer un compte administrateur</h4>
-                <p class="text-sm text-gray-500">
-                  Renseignez le prénom et le nom. L'identifiant généré reprendra l'initiale du prénom suivie du nom.
-                </p>
-              </div>
-              <form id="admin-create-form" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label for="admin-create-first-name" class="form-label">Prénom</label>
-                  <input type="text" id="admin-create-first-name" class="form-input" required />
-                </div>
-                <div>
-                  <label for="admin-create-last-name" class="form-label">Nom</label>
-                  <input type="text" id="admin-create-last-name" class="form-input" required />
-                </div>
-                <div class="md:col-span-2">
-                  <label for="admin-create-password" class="form-label">Mot de passe</label>
-                  <input
-                    type="password"
-                    id="admin-create-password"
-                    class="form-input"
-                    placeholder="Définissez un mot de passe"
-                    autocomplete="new-password"
-                    required
-                  />
-                  <p class="text-xs text-gray-500 mt-1">Aucune contrainte particulière, choisissez un mot de passe simple à retenir.</p>
-                </div>
-                <div id="admin-identifier-preview" class="md:col-span-2 text-sm text-gray-600 hidden">
-                  Identifiant généré :
-                  <span id="admin-identifier-preview-value" class="font-semibold font-mono"></span>
-                </div>
-                <div class="md:col-span-2 flex justify-end">
-                  <button type="submit" class="btn-admin">
-                    <i class="fas fa-user-plus mr-2"></i> Créer et se connecter
-                  </button>
-                </div>
-              </form>
             </section>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="driver-password-modal" class="modal hidden" aria-hidden="true">
+      <div class="modal__dialog max-w-sm">
+        <div class="p-6">
+          <div class="flex justify-between items-start mb-4">
+            <div>
+              <h3 class="text-xl font-semibold text-gray-800">Mot de passe chauffeur</h3>
+              <p class="text-sm text-gray-500">
+                Merci de saisir le mot de passe pour <span id="driver-password-name" class="font-semibold"></span>.
+              </p>
+            </div>
+            <button id="driver-password-cancel" class="text-gray-400 hover:text-gray-600">
+              <i class="fas fa-times"></i>
+              <span class="sr-only">Annuler</span>
+            </button>
+          </div>
+          <form id="driver-password-form" class="space-y-4">
+            <div>
+              <label for="driver-password-input" class="form-label">Mot de passe</label>
+              <input type="password" id="driver-password-input" class="form-input" autocomplete="current-password" required />
+            </div>
+            <p id="driver-password-error" class="text-sm text-red-600 hidden"></p>
+            <div class="flex justify-end">
+              <button type="submit" class="btn-primary">
+                <i class="fas fa-unlock-keyhole mr-2"></i> Se connecter
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div id="course-issue-modal" class="modal hidden" aria-hidden="true">
+      <div class="modal__dialog max-w-md">
+        <div class="p-6 space-y-4">
+          <div class="flex items-start justify-between">
+            <div>
+              <h3 class="text-xl font-semibold text-gray-800">Signaler un problème</h3>
+              <p class="text-sm text-gray-500">Décrivez brièvement le problème rencontré sur cette course.</p>
+            </div>
+            <button id="course-issue-cancel" class="text-gray-400 hover:text-gray-600" aria-label="Fermer">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <form id="course-issue-form" class="space-y-4">
+            <div>
+              <label for="course-issue-comment" class="form-label">Commentaire</label>
+              <textarea
+                id="course-issue-comment"
+                class="form-input"
+                rows="4"
+                placeholder="Expliquez le problème rencontré..."
+                required
+              ></textarea>
+            </div>
+            <p id="course-issue-error" class="text-sm text-red-600 hidden"></p>
+            <div class="flex justify-end gap-3">
+              <button type="button" id="course-issue-close" class="btn-secondary px-4 py-2">Annuler</button>
+              <button type="submit" class="btn-danger px-4 py-2">
+                <i class="fas fa-paper-plane mr-2"></i>Envoyer
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     </div>
@@ -184,6 +201,27 @@
           <button id="new-course-tab" class="tab-button ml-auto">
             <i class="fas fa-plus mr-1"></i> Nouvelle course
           </button>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-medium text-gray-600">Affichage</span>
+            <div class="flex gap-2">
+              <button type="button" class="filter-chip" data-driver-layout="cards">
+                <i class="fas fa-th-large mr-1"></i> Cartes
+              </button>
+              <button type="button" class="filter-chip" data-driver-layout="list">
+                <i class="fas fa-list mr-1"></i> Liste
+              </button>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-medium text-gray-600">Lisibilité</span>
+            <div class="flex gap-2">
+              <button type="button" class="filter-chip" data-driver-density="comfortable">Standard</button>
+              <button type="button" class="filter-chip" data-driver-density="contrast">Contraste</button>
+            </div>
+          </div>
         </div>
 
         <div id="today-courses">
@@ -294,51 +332,135 @@
         <div class="flex border-b border-gray-200">
           <button id="admin-planning-tab" class="admin-tab admin-tab--active">Planning</button>
           <button id="admin-archives-tab" class="admin-tab">Archives</button>
+          <button id="admin-settings-tab" class="admin-tab">Paramètres</button>
         </div>
 
         <div id="admin-planning-view" class="space-y-6">
           <section class="bg-white p-4 rounded-lg shadow-sm">
-            <h2 class="text-lg font-semibold text-gray-800">Gestion des chauffeurs</h2>
-            <form id="driver-management-form" class="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
-              <div>
-                <label class="form-label" for="driver-first-name">Prénom</label>
-                <input type="text" id="driver-first-name" class="form-input" required />
-              </div>
-              <div>
-                <label class="form-label" for="driver-last-name">Nom</label>
-                <input type="text" id="driver-last-name" class="form-input" required />
-              </div>
-              <div>
-                <label class="form-label" for="driver-email">Email (facultatif)</label>
-                <input type="email" id="driver-email" class="form-input" placeholder="prenom.nom@agriholann.com" />
-              </div>
-              <div class="md:col-span-1 flex items-end">
-                <button type="submit" class="btn-primary w-full md:w-auto">
-                  <i class="fas fa-user-plus mr-2"></i> Ajouter
-                </button>
-              </div>
-            </form>
-            <div id="driver-management-list" class="mt-4"></div>
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <h2 class="text-lg font-semibold text-gray-800">Gestion des chauffeurs</h2>
+              <button
+                id="driver-management-toggle"
+                type="button"
+                class="btn-tertiary text-sm"
+                aria-expanded="false"
+              >
+                <i class="fas fa-users-cog mr-2"></i> Afficher la gestion des chauffeurs
+              </button>
+            </div>
+            <div id="driver-management-panel" class="mt-4 hidden space-y-4">
+              <form id="driver-management-form" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                  <label class="form-label" for="driver-first-name">Prénom</label>
+                  <input type="text" id="driver-first-name" class="form-input" required />
+                </div>
+                <div>
+                  <label class="form-label" for="driver-last-name">Nom</label>
+                  <input type="text" id="driver-last-name" class="form-input" required />
+                </div>
+                <div>
+                  <label class="form-label" for="driver-email">Email (facultatif)</label>
+                  <input type="email" id="driver-email" class="form-input" placeholder="prenom.nom@agriholann.com" />
+                </div>
+                <div class="md:col-span-1 flex items-end">
+                  <button type="submit" class="btn-primary w-full md:w-auto">
+                    <i class="fas fa-user-plus mr-2"></i> Ajouter
+                  </button>
+                </div>
+              </form>
+              <div id="driver-management-list" class="mt-4"></div>
+            </div>
           </section>
 
           <section class="bg-white p-4 rounded-lg shadow-sm space-y-4">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+            <div class="grid grid-cols-1 xl:grid-cols-4 gap-4">
               <div>
-                <label class="form-label" for="admin-driver-select">Filtrer par chauffeur</label>
+                <label class="form-label" for="admin-driver-select">Chauffeur</label>
                 <select id="admin-driver-select" class="form-input">
                   <option value="all">Tous les chauffeurs</option>
                 </select>
               </div>
               <div>
+                <label class="form-label" for="admin-status-filter">Statut</label>
+                <select id="admin-status-filter" class="form-input">
+                  <option value="all">Tous les statuts</option>
+                  <option value="pending">À faire</option>
+                  <option value="completed">Terminées</option>
+                  <option value="issue_reported">Signalements</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label" for="admin-merchandise-filter">Marchandise</label>
+                <select id="admin-merchandise-filter" class="form-input">
+                  <option value="all">Toutes</option>
+                  <option value="Céréales">Céréales</option>
+                  <option value="Légumes">Légumes</option>
+                  <option value="Fruits">Fruits</option>
+                  <option value="Engrais">Engrais</option>
+                  <option value="Autre">Autre</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label" for="admin-search-filter">Recherche</label>
+                <input
+                  type="search"
+                  id="admin-search-filter"
+                  class="form-input"
+                  placeholder="Départ, destination, commentaire..."
+                />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-4 gap-4 items-end">
+              <div>
                 <span class="form-label">Période</span>
                 <div class="flex flex-wrap gap-2 mt-2">
                   <button type="button" class="filter-chip" data-admin-range="day">Aujourd'hui</button>
                   <button type="button" class="filter-chip" data-admin-range="week">7 jours</button>
+                  <button type="button" class="filter-chip" data-admin-range="month">30 jours</button>
+                  <button type="button" class="filter-chip" data-admin-range="custom">Personnalisé</button>
                   <button type="button" class="filter-chip" data-admin-range="all">Tout afficher</button>
                 </div>
               </div>
-              <div class="flex md:justify-end">
-                <button id="new-course-admin" class="btn-admin w-full md:w-auto">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label class="form-label" for="admin-from">Du</label>
+                  <input type="date" id="admin-from" class="form-input" />
+                </div>
+                <div>
+                  <label class="form-label" for="admin-to">Au</label>
+                  <input type="date" id="admin-to" class="form-input" />
+                </div>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label class="form-label" for="admin-issue-filter">Problèmes</label>
+                  <select id="admin-issue-filter" class="form-input">
+                    <option value="all">Toutes les courses</option>
+                    <option value="issues">Uniquement les signalements</option>
+                    <option value="clear">Aucun problème</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label" for="admin-photo-filter">Photos</label>
+                  <select id="admin-photo-filter" class="form-input">
+                    <option value="all">Toutes</option>
+                    <option value="with">Avec photo</option>
+                    <option value="without">Sans photo</option>
+                  </select>
+                </div>
+              </div>
+              <div class="flex flex-wrap gap-2 justify-end">
+                <button id="admin-reset-filters" class="btn-tertiary text-sm">
+                  <i class="fas fa-undo mr-1"></i> Réinitialiser
+                </button>
+                <button id="admin-export-pdf" class="btn-secondary text-sm">
+                  <i class="fas fa-file-pdf mr-1"></i> Export PDF
+                </button>
+                <button id="admin-export-excel" class="btn-secondary text-sm">
+                  <i class="fas fa-file-excel mr-1"></i> Export Excel
+                </button>
+                <button id="new-course-admin" class="btn-admin">
                   <i class="fas fa-plus mr-1"></i> Nouvelle course
                 </button>
               </div>
@@ -346,8 +468,31 @@
           </section>
 
           <section>
-            <h2 class="section-title">Planning des courses</h2>
-            <div class="overflow-x-auto">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <h2 class="section-title mb-0">Planning des courses</h2>
+              <div class="flex flex-wrap gap-4 items-center">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium text-gray-600">Affichage</span>
+                  <div class="flex gap-2">
+                    <button type="button" class="filter-chip" data-admin-layout="table">
+                      <i class="fas fa-table mr-1"></i> Tableau
+                    </button>
+                    <button type="button" class="filter-chip" data-admin-layout="cards">
+                      <i class="fas fa-layer-group mr-1"></i> Cartes
+                    </button>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium text-gray-600">Lisibilité</span>
+                  <div class="flex gap-2">
+                    <button type="button" class="filter-chip" data-admin-density="comfortable">Standard</button>
+                    <button type="button" class="filter-chip" data-admin-density="contrast">Contraste</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="admin-table-wrapper" class="overflow-x-auto">
               <table class="responsive-table min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
                   <tr>
@@ -363,6 +508,7 @@
                 <tbody id="admin-week-list" class="bg-white divide-y divide-gray-200"></tbody>
               </table>
             </div>
+            <div id="admin-card-list" class="grid gap-4 hidden"></div>
             <div id="no-courses-admin" class="empty-state hidden">
               <i class="fas fa-calendar-week text-4xl mb-3 opacity-30"></i>
               <p>Aucune course prévue</p>
@@ -425,6 +571,14 @@
                 </div>
               </div>
             </div>
+            <div class="flex flex-wrap gap-2 justify-end">
+              <button id="archive-export-pdf" class="btn-secondary text-sm">
+                <i class="fas fa-file-pdf mr-1"></i> Export PDF
+              </button>
+              <button id="archive-export-excel" class="btn-secondary text-sm">
+                <i class="fas fa-file-excel mr-1"></i> Export Excel
+              </button>
+            </div>
           </section>
 
           <section class="bg-white rounded-lg shadow-sm overflow-hidden">
@@ -446,6 +600,132 @@
             <div id="no-archive" class="empty-state hidden">
               <i class="fas fa-box-archive text-4xl mb-3 opacity-30"></i>
               <p>Aucune course archivée pour ces critères</p>
+            </div>
+          </section>
+        </div>
+
+        <div id="admin-settings-view" class="hidden space-y-6">
+          <section class="bg-white p-4 rounded-lg shadow-sm max-w-4xl">
+            <div class="flex flex-wrap items-center gap-2 border-b border-gray-200 pb-3 mb-4">
+              <button type="button" class="settings-tab settings-tab--active" data-settings-tab="email">
+                Configuration email
+              </button>
+              <button type="button" class="settings-tab" data-settings-tab="drivers">
+                Accès chauffeurs
+              </button>
+              <button type="button" class="settings-tab" data-settings-tab="admins">
+                Administrateurs
+              </button>
+            </div>
+
+            <div data-settings-panel="email" class="space-y-4">
+              <h3 class="text-lg font-semibold text-gray-800">Adresse de réception</h3>
+              <form id="email-settings-form" class="space-y-4">
+                <div>
+                  <label class="form-label" for="email-recipient">Adresse email de réception</label>
+                  <input type="email" id="email-recipient" class="form-input" required />
+                  <p class="text-xs text-gray-500 mt-1">Les récapitulatifs de courses sont envoyés à cette adresse.</p>
+                </div>
+                <div class="flex justify-end">
+                  <button type="submit" class="btn-primary">
+                    <i class="fas fa-save mr-2"></i> Enregistrer
+                  </button>
+                </div>
+              </form>
+              <p id="email-settings-status" class="text-sm mt-2 hidden"></p>
+            </div>
+
+            <div data-settings-panel="drivers" class="space-y-4 hidden">
+              <h3 class="text-lg font-semibold text-gray-800">Mots de passe chauffeurs</h3>
+              <p class="text-sm text-gray-500">
+                Définissez, modifiez ou supprimez les mots de passe des chauffeurs. Lorsqu'un mot de passe est défini, il sera demandé à la connexion.
+              </p>
+              <div id="driver-password-list" class="space-y-3"></div>
+              <p id="driver-password-empty" class="text-sm text-gray-500 hidden">Aucun chauffeur enregistré.</p>
+            </div>
+
+            <div id="admin-management-panel" data-settings-panel="admins" class="space-y-4 hidden">
+              <div class="space-y-1">
+                <h3 class="text-lg font-semibold text-gray-800">Gestion des administrateurs</h3>
+                <p class="text-sm text-gray-500">
+                  Seul Laurent Saquet (super administrateur) peut créer ou supprimer des comptes administrateurs.
+                </p>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  class="admin-management-tab admin-management-tab--active"
+                  data-admin-management-tab="list"
+                  aria-selected="true"
+                >
+                  Liste des administrateurs
+                </button>
+                <button
+                  type="button"
+                  class="admin-management-tab"
+                  data-admin-management-tab="create"
+                  aria-selected="false"
+                >
+                  Créer un administrateur
+                </button>
+              </div>
+
+              <p id="admin-management-status" class="text-sm mt-2 hidden"></p>
+
+              <div data-admin-management-panel="list" class="space-y-3">
+                <div id="admin-management-list" class="space-y-3"></div>
+              </div>
+
+              <div data-admin-management-panel="create" class="space-y-4 hidden">
+                <form id="admin-management-create-form" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label for="admin-management-first-name" class="form-label">Prénom</label>
+                    <input type="text" id="admin-management-first-name" class="form-input" required />
+                  </div>
+                  <div>
+                    <label for="admin-management-last-name" class="form-label">Nom</label>
+                    <input type="text" id="admin-management-last-name" class="form-input" required />
+                  </div>
+                  <div>
+                    <label for="admin-management-password" class="form-label">Mot de passe</label>
+                    <input type="password" id="admin-management-password" class="form-input" autocomplete="new-password" required />
+                  </div>
+                  <div>
+                    <label for="admin-management-role" class="form-label">Niveau d'accès</label>
+                    <select id="admin-management-role" class="form-input">
+                      <option value="manager">Gestion</option>
+                      <option value="standard">Standard</option>
+                    </select>
+                  </div>
+                  <div class="md:col-span-2 flex justify-end">
+                    <button type="submit" class="btn-admin">
+                      <i class="fas fa-user-plus mr-2"></i> Ajouter un administrateur
+                    </button>
+                  </div>
+                </form>
+
+                <div class="border-t border-gray-200 pt-4">
+                  <h4 class="text-base font-semibold text-gray-800">Changer mon mot de passe</h4>
+                  <form id="admin-password-form" class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+                    <div class="md:col-span-2">
+                      <label for="admin-password-current" class="form-label">Mot de passe actuel</label>
+                      <input type="password" id="admin-password-current" class="form-input" autocomplete="current-password" />
+                      <p class="text-xs text-gray-500 mt-1">Obligatoire si un mot de passe est déjà défini.</p>
+                    </div>
+                    <div class="md:col-span-2">
+                      <label for="admin-password-new" class="form-label">Nouveau mot de passe</label>
+                      <input type="password" id="admin-password-new" class="form-input" autocomplete="new-password" required />
+                    </div>
+                    <div class="md:col-span-2 flex justify-end">
+                      <button type="submit" class="btn-primary">
+                        <i class="fas fa-key mr-2"></i> Mettre à jour
+                      </button>
+                    </div>
+                  </form>
+                  <p id="admin-password-feedback" class="text-sm mt-2 hidden"></p>
+                </div>
+              </div>
             </div>
           </section>
         </div>
@@ -477,6 +757,21 @@
             </button>
           </div>
           <div class="mb-4">
+            <div class="flex flex-wrap items-center justify-between mb-3 gap-2">
+              <div class="flex items-center gap-2 text-sm text-gray-600">
+                <i class="fas fa-sync-alt text-gray-400"></i>
+                <span>Sélectionner la caméra</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button id="switch-camera" type="button" class="btn-tertiary text-sm">
+                  <i class="fas fa-exchange-alt mr-2"></i> Inverser
+                </button>
+                <select id="camera-facing-select" class="form-input text-sm w-40">
+                  <option value="environment">Caméra arrière</option>
+                  <option value="user">Caméra avant</option>
+                </select>
+              </div>
+            </div>
             <div class="bg-gray-100 rounded-md h-64 flex items-center justify-center mb-3">
               <video id="camera" class="w-full h-full object-cover rounded-md hidden" playsinline></video>
               <canvas id="canvas" class="hidden"></canvas>
@@ -571,6 +866,51 @@
               <button type="submit" class="btn-primary">Enregistrer</button>
             </div>
           </form>
+        </div>
+      </div>
+    </div>
+
+    <div id="messaging-fab" class="messaging-fab hidden">
+      <button id="messaging-toggle" class="messaging-fab__button" aria-label="Ouvrir la messagerie">
+        <i class="fas fa-comments"></i>
+        <span id="messaging-unread" class="messaging-fab__badge hidden">0</span>
+      </button>
+    </div>
+
+    <div id="messaging-panel" class="messaging-panel hidden" aria-hidden="true">
+      <div class="messaging-panel__container">
+        <div class="messaging-panel__header">
+          <div>
+            <h3 class="messaging-panel__title">Messagerie sécurisée</h3>
+            <p id="messaging-subtitle" class="messaging-panel__subtitle">Contactez l'administration en direct.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <select id="messaging-driver-picker" class="messaging-panel__select hidden"></select>
+            <button id="messaging-close" class="messaging-panel__close" aria-label="Fermer la messagerie">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+        </div>
+        <div class="messaging-panel__body">
+          <aside id="messaging-thread-list" class="messaging-thread-list hidden" aria-label="Conversations"></aside>
+          <div class="messaging-conversation">
+            <div id="messaging-messages" class="messaging-messages" aria-live="polite"></div>
+            <form id="messaging-form" class="messaging-form">
+              <textarea
+                id="messaging-input"
+                class="messaging-input"
+                rows="2"
+                placeholder="Écrivez votre message..."
+                required
+              ></textarea>
+              <div class="messaging-actions">
+                <span id="messaging-error" class="messaging-error hidden"></span>
+                <button type="submit" class="messaging-send">
+                  <i class="fas fa-paper-plane mr-2"></i>Envoyer
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       </div>
     </div>

@@ -1,7 +1,37 @@
 const API_BASE = '/api';
 
+const ADMIN_EDIT_DEFAULT = Object.freeze({
+  id: null,
+  firstName: '',
+  lastName: '',
+  identifier: '',
+  role: 'standard',
+  saving: false,
+});
+
+const DEFAULT_ADMIN_FILTERS = Object.freeze({
+  driverId: 'all',
+  range: 'week',
+  status: 'all',
+  merchandise: 'all',
+  issue: 'all',
+  hasPhoto: 'all',
+  search: '',
+  from: null,
+  to: null,
+});
+
+const DEFAULT_ARCHIVE_FILTERS = Object.freeze({
+  driverId: 'all',
+  merchandise: 'all',
+  period: 'week',
+  from: null,
+  to: null,
+});
+
 const state = {
-  drivers: [],
+  driverSearchResults: [],
+  adminDrivers: [],
   driverCourses: [],
   adminCourses: [],
   archivedCourses: [],
@@ -10,22 +40,56 @@ const state = {
   currentUser: null,
   isAdmin: false,
   admins: [],
-  adminFilters: {
-    driverId: 'all',
-    range: 'week',
-  },
-  archiveFilters: {
-    driverId: 'all',
-    merchandise: 'all',
-    period: 'week',
-    from: null,
-    to: null,
-  },
+  adminFilters: { ...DEFAULT_ADMIN_FILTERS },
+  archiveFilters: { ...DEFAULT_ARCHIVE_FILTERS },
   adminView: 'planning',
   currentCourseId: null,
   photoDataUrl: null,
   pendingCompletionComments: '',
+  pendingDriverLogin: null,
+  driverPasswordError: '',
+  activeDriverTab: 'today',
+  cameraFacingMode: 'environment',
+  driverManagement: {
+    expanded: false,
+    loading: false,
+    error: null,
+  },
+  driverPasswordManagement: {
+    drivers: [],
+    loading: false,
+    editingDriverId: null,
+  },
+  courseIssue: {
+    courseId: null,
+    submitting: false,
+  },
+  messaging: {
+    unreadCount: 0,
+    isOpen: false,
+    loading: false,
+    messages: [],
+    threads: [],
+    activeDriverId: null,
+    sending: false,
+  },
+  settings: {
+    emailRecipient: '',
+    loaded: false,
+    saving: false,
+    activeTab: 'email',
+  },
+  adminManagementView: 'list',
+  adminEdit: { ...ADMIN_EDIT_DEFAULT },
+  displayPreferences: {
+    driverLayout: 'cards',
+    driverDensity: 'comfortable',
+    adminLayout: 'table',
+    adminDensity: 'comfortable',
+  },
 };
+
+let adminSearchTimer = null;
 
 const elements = {
   loginPage: document.getElementById('login-page'),
@@ -51,11 +115,23 @@ const elements = {
   weekList: document.getElementById('week-list'),
   adminDriverSelect: document.getElementById('admin-driver-select'),
   adminWeekList: document.getElementById('admin-week-list'),
+  adminTableWrapper: document.getElementById('admin-table-wrapper'),
+  adminCardList: document.getElementById('admin-card-list'),
   noCoursesAdmin: document.getElementById('no-courses-admin'),
   activityLogList: document.getElementById('activity-log'),
   noActivity: document.getElementById('no-activity'),
   newCourseAdminBtn: document.getElementById('new-course-admin'),
   adminRangeButtons: document.querySelectorAll('[data-admin-range]'),
+  adminStatusFilter: document.getElementById('admin-status-filter'),
+  adminMerchandiseFilter: document.getElementById('admin-merchandise-filter'),
+  adminSearchFilter: document.getElementById('admin-search-filter'),
+  adminIssueFilter: document.getElementById('admin-issue-filter'),
+  adminPhotoFilter: document.getElementById('admin-photo-filter'),
+  adminFromInput: document.getElementById('admin-from'),
+  adminToInput: document.getElementById('admin-to'),
+  adminResetFiltersBtn: document.getElementById('admin-reset-filters'),
+  adminExportPdfBtn: document.getElementById('admin-export-pdf'),
+  adminExportExcelBtn: document.getElementById('admin-export-excel'),
   addCourseForm: document.getElementById('add-course-form'),
   adminDriverField: document.getElementById('admin-driver-field'),
   adminDriverPicker: document.getElementById('admin-driver-picker'),
@@ -81,6 +157,8 @@ const elements = {
   captureBtn: document.getElementById('capture-btn'),
   confirmPhotoBtn: document.getElementById('confirm-photo'),
   retakePhotoBtn: document.getElementById('retake-photo'),
+  switchCameraBtn: document.getElementById('switch-camera'),
+  cameraFacingSelect: document.getElementById('camera-facing-select'),
   courseEditorModal: document.getElementById('course-editor-modal'),
   courseEditorTitle: document.getElementById('course-editor-title'),
   courseEditorForm: document.getElementById('course-editor-form'),
@@ -99,21 +177,31 @@ const elements = {
   adminIdentifierInput: document.getElementById('admin-identifier-input'),
   adminPasswordInput: document.getElementById('admin-password-input'),
   adminAccountsList: document.getElementById('admin-accounts'),
-  adminCreateForm: document.getElementById('admin-create-form'),
-  adminCreateFirstName: document.getElementById('admin-create-first-name'),
-  adminCreateLastName: document.getElementById('admin-create-last-name'),
-  adminCreatePassword: document.getElementById('admin-create-password'),
-  adminIdentifierPreview: document.getElementById('admin-identifier-preview'),
-  adminIdentifierPreviewValue: document.getElementById('admin-identifier-preview-value'),
+  driverPasswordModal: document.getElementById('driver-password-modal'),
+  driverPasswordForm: document.getElementById('driver-password-form'),
+  driverPasswordInput: document.getElementById('driver-password-input'),
+  driverPasswordCancel: document.getElementById('driver-password-cancel'),
+  driverPasswordError: document.getElementById('driver-password-error'),
+  driverPasswordName: document.getElementById('driver-password-name'),
+  courseIssueModal: document.getElementById('course-issue-modal'),
+  courseIssueForm: document.getElementById('course-issue-form'),
+  courseIssueComment: document.getElementById('course-issue-comment'),
+  courseIssueError: document.getElementById('course-issue-error'),
+  courseIssueCancel: document.getElementById('course-issue-cancel'),
+  courseIssueClose: document.getElementById('course-issue-close'),
   driverManagementForm: document.getElementById('driver-management-form'),
   driverFirstNameInput: document.getElementById('driver-first-name'),
   driverLastNameInput: document.getElementById('driver-last-name'),
   driverEmailInput: document.getElementById('driver-email'),
   driverListContainer: document.getElementById('driver-management-list'),
+  driverManagementToggle: document.getElementById('driver-management-toggle'),
+  driverManagementPanel: document.getElementById('driver-management-panel'),
   adminPlanningTab: document.getElementById('admin-planning-tab'),
   adminArchivesTab: document.getElementById('admin-archives-tab'),
+  adminSettingsTab: document.getElementById('admin-settings-tab'),
   adminPlanningView: document.getElementById('admin-planning-view'),
   adminArchiveView: document.getElementById('admin-archive-view'),
+  adminSettingsView: document.getElementById('admin-settings-view'),
   archiveDriverFilter: document.getElementById('archive-driver-filter'),
   archiveMerchandiseFilter: document.getElementById('archive-merchandise-filter'),
   archivePeriodFilter: document.getElementById('archive-period-filter'),
@@ -121,7 +209,48 @@ const elements = {
   archiveToInput: document.getElementById('archive-to'),
   archiveList: document.getElementById('archive-list'),
   noArchive: document.getElementById('no-archive'),
+  emailSettingsForm: document.getElementById('email-settings-form'),
+  emailRecipientInput: document.getElementById('email-recipient'),
+  messagingFab: document.getElementById('messaging-fab'),
+  messagingToggle: document.getElementById('messaging-toggle'),
+  messagingUnread: document.getElementById('messaging-unread'),
+  messagingPanel: document.getElementById('messaging-panel'),
+  messagingClose: document.getElementById('messaging-close'),
+  messagingMessages: document.getElementById('messaging-messages'),
+  messagingForm: document.getElementById('messaging-form'),
+  messagingInput: document.getElementById('messaging-input'),
+  messagingError: document.getElementById('messaging-error'),
+  messagingThreadList: document.getElementById('messaging-thread-list'),
+  messagingDriverPicker: document.getElementById('messaging-driver-picker'),
+  messagingSubtitle: document.getElementById('messaging-subtitle'),
+  emailSettingsStatus: document.getElementById('email-settings-status'),
+  settingsTabButtons: document.querySelectorAll('[data-settings-tab]'),
+  settingsPanels: document.querySelectorAll('[data-settings-panel]'),
+  driverPasswordList: document.getElementById('driver-password-list'),
+  driverPasswordEmpty: document.getElementById('driver-password-empty'),
+  adminManagementSection: document.getElementById('admin-management-panel'),
+  adminManagementList: document.getElementById('admin-management-list'),
+  adminManagementCreateForm: document.getElementById('admin-management-create-form'),
+  adminManagementFirstName: document.getElementById('admin-management-first-name'),
+  adminManagementLastName: document.getElementById('admin-management-last-name'),
+  adminManagementPassword: document.getElementById('admin-management-password'),
+  adminManagementRole: document.getElementById('admin-management-role'),
+  adminManagementStatus: document.getElementById('admin-management-status'),
+  adminManagementTabButtons: document.querySelectorAll('[data-admin-management-tab]'),
+  adminManagementPanels: document.querySelectorAll('[data-admin-management-panel]'),
+  adminPasswordForm: document.getElementById('admin-password-form'),
+  adminPasswordCurrent: document.getElementById('admin-password-current'),
+  adminPasswordNew: document.getElementById('admin-password-new'),
+  adminPasswordFeedback: document.getElementById('admin-password-feedback'),
+  driverLayoutButtons: document.querySelectorAll('[data-driver-layout]'),
+  driverDensityButtons: document.querySelectorAll('[data-driver-density]'),
+  adminLayoutButtons: document.querySelectorAll('[data-admin-layout]'),
+  adminDensityButtons: document.querySelectorAll('[data-admin-density]'),
+  archiveExportPdfBtn: document.getElementById('archive-export-pdf'),
+  archiveExportExcelBtn: document.getElementById('archive-export-excel'),
 };
+
+let eventSource = null;
 
 function showElement(element) {
   if (element) {
@@ -145,11 +274,17 @@ function setDefaultCourseDateTime() {
 }
 
 async function apiFetch(path, options = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(options.headers || {}),
+  };
+
+  if (state.currentUser?.role === 'admin' && state.currentUser?.token) {
+    headers['X-Admin-Token'] = state.currentUser.token;
+  }
+
   const config = {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
+    headers,
     ...options,
   };
 
@@ -173,6 +308,7 @@ function normalizeDriver(driver) {
     lastName: driver.last_name || driver.lastName,
     email: driver.email || null,
     phone: driver.phone || null,
+    hasPassword: Boolean(driver.has_password ?? driver.hasPassword ?? false),
   };
 }
 
@@ -186,7 +322,20 @@ function normalizeAdmin(admin) {
     identifier: admin.identifier,
     initials: admin.initials || computeInitials(firstName, lastName),
     createdAt: admin.created_at || admin.createdAt || null,
+    role: admin.role || 'standard',
   };
+}
+
+function escapeHtml(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function mapCourse(course) {
@@ -201,6 +350,8 @@ function mapCourse(course) {
     merchandise: course.merchandise || '',
     comments: course.comments || '',
     status: course.status,
+    issueReportedAt: course.issueReportedAt || course.issue_reported_at || null,
+    issueReportComment: course.issueReportComment || course.issue_report_comment || '',
     photoUrl: course.photoUrl || course.photo_path || null,
     completionComments: course.completionComments || course.completion_comments || '',
     createdAt: course.createdAt || course.created_at || null,
@@ -211,6 +362,41 @@ function mapCourse(course) {
 
   state.courseCache.set(normalized.id, normalized);
   return normalized;
+}
+
+function getCourseStatusMeta(course, { archivedClass = 'bg-gray-200 text-gray-600' } = {}) {
+  if (!course) {
+    return {
+      label: 'Inconnu',
+      className: 'bg-gray-200 text-gray-600',
+    };
+  }
+
+  if (course.isArchived) {
+    return {
+      label: 'Archivée',
+      className: archivedClass,
+    };
+  }
+
+  if (course.status === 'completed') {
+    return {
+      label: 'Terminé',
+      className: 'bg-green-100 text-green-800',
+    };
+  }
+
+  if (course.status === 'issue_reported') {
+    return {
+      label: 'En attente',
+      className: 'bg-red-100 text-red-700',
+    };
+  }
+
+  return {
+    label: 'À faire',
+    className: 'bg-yellow-100 text-yellow-800',
+  };
 }
 
 function startOfDay(date) {
@@ -256,6 +442,48 @@ function computeAdminIdentifier(firstName, lastName) {
   return `${trimmedFirst.charAt(0)}${trimmedLast}`.toLowerCase();
 }
 
+function applyDisplayPreferences() {
+  if (elements.driverDashboard) {
+    elements.driverDashboard.dataset.courseLayout = state.displayPreferences.driverLayout;
+    elements.driverDashboard.dataset.courseDensity = state.displayPreferences.driverDensity;
+  }
+
+  if (elements.adminDashboard) {
+    elements.adminDashboard.dataset.courseLayout = state.displayPreferences.adminLayout;
+    elements.adminDashboard.dataset.courseDensity = state.displayPreferences.adminDensity;
+  }
+
+  elements.driverLayoutButtons?.forEach((button) => {
+    const isActive = button.dataset.driverLayout === state.displayPreferences.driverLayout;
+    button.classList.toggle('filter-chip--active', isActive);
+  });
+
+  elements.driverDensityButtons?.forEach((button) => {
+    const isActive = button.dataset.driverDensity === state.displayPreferences.driverDensity;
+    button.classList.toggle('filter-chip--active', isActive);
+  });
+
+  elements.adminLayoutButtons?.forEach((button) => {
+    const isActive = button.dataset.adminLayout === state.displayPreferences.adminLayout;
+    button.classList.toggle('filter-chip--active', isActive);
+  });
+
+  elements.adminDensityButtons?.forEach((button) => {
+    const isActive = button.dataset.adminDensity === state.displayPreferences.adminDensity;
+    button.classList.toggle('filter-chip--active', isActive);
+  });
+}
+
+function formatAdminLevel(role) {
+  if (role === 'superadmin') {
+    return 'Super admin';
+  }
+  if (role === 'manager') {
+    return 'Gestion';
+  }
+  return 'Standard';
+}
+
 function getUserInitials() {
   if (state.currentUser?.initials) {
     return state.currentUser.initials;
@@ -277,8 +505,8 @@ async function searchDrivers() {
 
   try {
     const drivers = await apiFetch(`/drivers?search=${encodeURIComponent(searchTerm)}`);
-    state.drivers = drivers.map(normalizeDriver);
-    renderDriverList(state.drivers);
+    state.driverSearchResults = drivers.map(normalizeDriver);
+    renderDriverList(state.driverSearchResults);
   } catch (error) {
     console.error(error);
     elements.driverList.innerHTML = '<p class="text-sm text-red-600">Erreur lors de la recherche</p>';
@@ -300,7 +528,9 @@ function renderDriverList(drivers) {
     button.className = 'w-full text-left px-4 py-2 bg-gray-50 hover:bg-gray-100 rounded-md transition';
     button.innerHTML = `
       <div class="font-medium">${driver.firstName} ${driver.lastName}</div>
-      <div class="text-xs text-gray-500">Chauffeur</div>
+      <div class="text-xs text-gray-500 flex items-center gap-2">
+        ${driver.hasPassword ? '<i class="fas fa-lock text-green-600"></i><span>Mot de passe requis</span>' : '<span>Chauffeur</span>'}
+      </div>
     `;
     button.addEventListener('click', () => loginAsDriver(driver));
     elements.driverList.appendChild(button);
@@ -309,50 +539,227 @@ function renderDriverList(drivers) {
   showElement(elements.driverResults);
 }
 
-async function loginAsDriver(driver) {
+async function loginAsDriver(driver, options = {}) {
+  const { skipPasswordCheck = false, initialTab = 'today', displayPreferences = null } = options;
+  const normalizedDriver = normalizeDriver(driver);
+
+  if (!skipPasswordCheck && normalizedDriver.hasPassword) {
+    state.pendingDriverLogin = normalizedDriver;
+    state.driverPasswordError = '';
+    openDriverPasswordModal(normalizedDriver);
+    return;
+  }
+
   state.currentUser = {
-    ...driver,
+    ...normalizedDriver,
     role: 'driver',
-    initials: computeInitials(driver.firstName, driver.lastName),
+    initials: computeInitials(normalizedDriver.firstName, normalizedDriver.lastName),
   };
   state.isAdmin = false;
-  elements.driverNameDisplay.textContent = `${driver.firstName} ${driver.lastName}`;
+  elements.driverNameDisplay.textContent = `${normalizedDriver.firstName} ${normalizedDriver.lastName}`;
   hideElement(elements.loginPage);
   showElement(elements.driverDashboard);
   hideElement(elements.adminDashboard);
-  switchTab('today');
+  closeDriverPasswordModal();
+  state.activeDriverTab = initialTab;
+  if (displayPreferences) {
+    state.displayPreferences = {
+      ...state.displayPreferences,
+      ...displayPreferences,
+    };
+  }
+  applyDisplayPreferences();
+  switchTab(initialTab);
   await loadDriverCourses();
+  updateMessagingAvailability();
+  persistSessionState();
 }
 
-function setAdminSession(admin) {
+function openDriverPasswordModal(driver) {
+  if (!elements.driverPasswordModal) {
+    const password = window.prompt('Mot de passe chauffeur');
+    if (password !== null) {
+      state.driverPasswordError = '';
+      state.pendingDriverLogin = driver;
+      handleDriverPasswordPrompt(password);
+    }
+    return;
+  }
+
+  if (elements.driverPasswordInput) {
+    elements.driverPasswordInput.value = '';
+  }
+  if (elements.driverPasswordError) {
+    elements.driverPasswordError.textContent = '';
+    elements.driverPasswordError.classList.add('hidden');
+  }
+  if (elements.driverPasswordName) {
+    elements.driverPasswordName.textContent = `${driver.firstName} ${driver.lastName}`;
+  }
+
+  showElement(elements.driverPasswordModal);
+
+  setTimeout(() => {
+    elements.driverPasswordInput?.focus();
+  }, 50);
+}
+
+function closeDriverPasswordModal() {
+  if (elements.driverPasswordModal) {
+    hideElement(elements.driverPasswordModal);
+  }
+  state.pendingDriverLogin = null;
+  state.driverPasswordError = '';
+  if (elements.driverPasswordError) {
+    elements.driverPasswordError.textContent = '';
+    elements.driverPasswordError.classList.add('hidden');
+  }
+  if (elements.driverPasswordInput) {
+    elements.driverPasswordInput.value = '';
+  }
+}
+
+async function processDriverPassword(password, { inline = false } = {}) {
+  if (!state.pendingDriverLogin) {
+    return;
+  }
+
+  const trimmed = typeof password === 'string' ? password.trim() : '';
+  if (!trimmed) {
+    if (inline && elements.driverPasswordError) {
+      elements.driverPasswordError.textContent = 'Veuillez renseigner le mot de passe chauffeur.';
+      elements.driverPasswordError.classList.remove('hidden');
+    } else {
+      alert('Veuillez renseigner le mot de passe chauffeur.');
+    }
+    return;
+  }
+
+  try {
+    const pending = state.pendingDriverLogin;
+    const result = await apiFetch('/drivers/login', {
+      method: 'POST',
+      body: JSON.stringify({ driverId: pending.id, password: trimmed }),
+    });
+
+    const normalized = normalizeDriver({
+      id: result.id || pending.id,
+      first_name: result.firstName || pending.firstName,
+      last_name: result.lastName || pending.lastName,
+      email: result.email ?? pending.email,
+      phone: result.phone ?? pending.phone,
+      has_password: result.hasPassword ?? pending.hasPassword,
+    });
+
+    closeDriverPasswordModal();
+    await loginAsDriver(normalized, { skipPasswordCheck: true });
+  } catch (error) {
+    state.driverPasswordError = error.message;
+    if (inline && elements.driverPasswordError) {
+      elements.driverPasswordError.textContent = error.message;
+      elements.driverPasswordError.classList.remove('hidden');
+    } else {
+      alert(error.message);
+    }
+  }
+}
+
+async function handleDriverPasswordSubmit(event) {
+  event.preventDefault();
+  await processDriverPassword(elements.driverPasswordInput?.value || '', { inline: true });
+}
+
+async function handleDriverPasswordPrompt(password) {
+  await processDriverPassword(password, { inline: false });
+}
+
+function setAdminSession(admin, options = {}) {
   const normalized = normalizeAdmin(admin);
+  const view = options.view || options.adminView || 'planning';
+  const driverTab = options.driverTab || options.activeDriverTab || 'week';
+  const settingsTab = options.settingsTab || 'email';
+  const displayPreferences = {
+    ...state.displayPreferences,
+    ...(options.displayPreferences || {}),
+  };
+
   state.currentUser = {
     ...normalized,
     role: 'admin',
+    adminLevel: normalized.role || 'standard',
+    token: admin.token || state.currentUser?.token || null,
   };
   state.isAdmin = true;
-  state.adminFilters = { driverId: 'all', range: 'week' };
-  state.archiveFilters = { driverId: 'all', merchandise: 'all', period: 'week', from: null, to: null };
-  updateArchivePeriodInputs();
+  state.adminFilters = { ...DEFAULT_ADMIN_FILTERS, ...(options.adminFilters || {}) };
+  state.archiveFilters = { ...DEFAULT_ARCHIVE_FILTERS, ...(options.archiveFilters || {}) };
+  state.displayPreferences = displayPreferences;
+  state.settings = {
+    emailRecipient: '',
+    loaded: false,
+    saving: false,
+    activeTab: settingsTab,
+  };
+  state.adminManagementView = options.adminManagementView || 'list';
+  state.driverPasswordManagement = { drivers: [], loading: false, editingDriverId: null };
+  state.driverManagement.expanded = false;
+  state.driverManagement.loading = false;
+  state.driverManagement.error = null;
+  state.adminDrivers = [];
+  state.driverSearchResults = [];
+  state.activeDriverTab = driverTab;
 
   hideElement(elements.loginPage);
   hideElement(elements.driverDashboard);
   showElement(elements.adminDashboard);
   closeAdminLoginModal();
 
+  applyDisplayPreferences();
+  syncAdminFiltersToInputs();
+
   if (elements.adminIdentifierDisplay) {
-    elements.adminIdentifierDisplay.textContent = `${state.currentUser.initials} (${state.currentUser.identifier})`;
+    const levelLabel =
+      state.currentUser.adminLevel === 'superadmin'
+        ? 'Super admin'
+        : state.currentUser.adminLevel === 'manager'
+        ? 'Gestion'
+        : 'Standard';
+    elements.adminIdentifierDisplay.textContent = `${state.currentUser.initials} (${state.currentUser.identifier} • ${levelLabel})`;
   }
 
-  state.adminView = 'planning';
-  switchAdminView('planning');
+  resetEmailSettingsStatus();
+  renderDriverManagementPanel();
+  renderSettingsTabs();
+
+  switchAdminView(view);
   updateAdminRangeButtons();
-  switchTab('week');
+  switchTab(state.activeDriverTab);
+
+  if (elements.archiveMerchandiseFilter) {
+    elements.archiveMerchandiseFilter.value = state.archiveFilters.merchandise || 'all';
+  }
+  if (elements.archivePeriodFilter) {
+    elements.archivePeriodFilter.value = state.archiveFilters.period || 'week';
+  }
+  updateArchivePeriodInputs({ resetValues: false });
+  if (state.archiveFilters.period === 'custom') {
+    if (elements.archiveFromInput) {
+      elements.archiveFromInput.value = state.archiveFilters.from || '';
+    }
+    if (elements.archiveToInput) {
+      elements.archiveToInput.value = state.archiveFilters.to || '';
+    }
+  }
 
   loadAdminDrivers();
   loadAdminCourses();
   loadActivityLog();
   loadArchivedCourses();
+  loadEmailRecipient();
+  if (state.currentUser.adminLevel === 'superadmin') {
+    loadAdmins();
+  }
+  updateMessagingAvailability();
+  persistSessionState();
 }
 
 function openAdminLoginModal() {
@@ -363,11 +770,6 @@ function openAdminLoginModal() {
   if (elements.adminPasswordInput) {
     elements.adminPasswordInput.value = '';
   }
-  elements.adminCreateForm?.reset();
-  if (elements.adminCreatePassword) {
-    elements.adminCreatePassword.value = '';
-  }
-  updateAdminIdentifierPreview();
   loadAdmins();
   showElement(elements.adminLoginModal);
 }
@@ -405,43 +807,15 @@ async function handleAdminLogin(event) {
   }
 }
 
-async function handleAdminCreate(event) {
-  event.preventDefault();
-
-  const firstName = elements.adminCreateFirstName.value.trim();
-  const lastName = elements.adminCreateLastName.value.trim();
-  const password = elements.adminCreatePassword?.value || '';
-
-  if (!firstName || !lastName) {
-    alert('Veuillez renseigner un prénom et un nom.');
-    return;
-  }
-
-  if (!password) {
-    alert('Veuillez définir un mot de passe pour ce compte administrateur.');
-    return;
-  }
-
-  try {
-    const admin = await apiFetch('/admins', {
-      method: 'POST',
-      body: JSON.stringify({ firstName, lastName, password }),
-    });
-
-    await loadAdmins();
-    alert(`Compte administrateur créé. Identifiant : ${admin.identifier}`);
-    setAdminSession(admin);
-  } catch (error) {
-    console.error('Erreur lors de la création du compte administrateur', error);
-    alert(error.message);
-  }
-}
-
 async function loadAdmins() {
   try {
     const admins = await apiFetch('/admins');
     state.admins = admins.map(normalizeAdmin);
+    if (state.adminEdit.id && !state.admins.some((admin) => admin.id === state.adminEdit.id)) {
+      resetAdminEditState();
+    }
     renderAdminAccounts();
+    renderAdminManagement();
   } catch (error) {
     console.error('Erreur lors du chargement des comptes administrateurs', error);
   }
@@ -472,7 +846,10 @@ function renderAdminAccounts() {
     item.innerHTML = `
       <div>
         <div class="font-medium text-gray-800">${admin.firstName} ${admin.lastName}</div>
-        <div class="text-xs text-gray-500">Identifiant : <span class="font-mono">${admin.identifier}</span></div>
+        <div class="text-xs text-gray-500 flex flex-wrap gap-2 items-center">
+          <span>Identifiant : <span class="font-mono">${admin.identifier}</span></span>
+          <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">${formatAdminLevel(admin.role)}</span>
+        </div>
       </div>
       <button type="button" class="text-blue-600 hover:text-blue-800 text-xs font-medium">Utiliser</button>
     `;
@@ -489,34 +866,378 @@ function renderAdminAccounts() {
   elements.adminAccountsList.appendChild(list);
 }
 
-function updateAdminIdentifierPreview() {
-  if (!elements.adminIdentifierPreview) {
+function resetAdminEditState() {
+  Object.assign(state.adminEdit, ADMIN_EDIT_DEFAULT);
+}
+
+function startAdminEdit(admin) {
+  Object.assign(state.adminEdit, {
+    id: admin.id,
+    firstName: admin.firstName || '',
+    lastName: admin.lastName || '',
+    identifier: admin.identifier || '',
+    role: admin.role || 'standard',
+    saving: false,
+  });
+  renderAdminManagement();
+}
+
+function cancelAdminEdit() {
+  resetAdminEditState();
+  renderAdminManagement();
+}
+
+function updateAdminEditField(field, value) {
+  if (!state.adminEdit || state.adminEdit.id === null) {
+    return;
+  }
+  state.adminEdit[field] = value;
+}
+
+async function handleAdminUpdate(event, adminId) {
+  event.preventDefault();
+
+  if (state.adminEdit.id !== adminId) {
     return;
   }
 
-  const firstName = elements.adminCreateFirstName.value;
-  const lastName = elements.adminCreateLastName.value;
-  const identifier = computeAdminIdentifier(firstName, lastName);
+  const firstName = (state.adminEdit.firstName || '').trim();
+  const lastName = (state.adminEdit.lastName || '').trim();
+  const identifier = (state.adminEdit.identifier || '').trim();
+  const role = state.adminEdit.role || 'standard';
 
-  if (identifier) {
-    elements.adminIdentifierPreviewValue.textContent = identifier;
-    showElement(elements.adminIdentifierPreview);
-  } else {
-    elements.adminIdentifierPreviewValue.textContent = '';
-    hideElement(elements.adminIdentifierPreview);
+  if (!firstName || !lastName || !identifier) {
+    setAdminManagementStatus('Veuillez renseigner prénom, nom et identifiant.', true);
+    return;
+  }
+
+  let finalMessage = '';
+  let isError = false;
+
+  try {
+    state.adminEdit.saving = true;
+    renderAdminManagement();
+    setAdminManagementStatus('Mise à jour du compte administrateur...');
+    await apiFetch(`/admins/${adminId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ firstName, lastName, identifier, role }),
+    });
+    await loadAdmins();
+    resetAdminEditState();
+    finalMessage = 'Administrateur mis à jour.';
+  } catch (error) {
+    console.error('Erreur lors de la mise à jour du compte administrateur', error);
+    finalMessage = error.message || 'Impossible de mettre à jour cet administrateur.';
+    isError = true;
+  } finally {
+    state.adminEdit.saving = false;
+    renderAdminManagement();
+    if (finalMessage) {
+      setAdminManagementStatus(finalMessage, isError);
+    }
   }
 }
 
-function logout() {
+function renderAdminManagementTabs() {
+  const buttons = elements.adminManagementTabButtons;
+  if (buttons && buttons.length) {
+    buttons.forEach((button) => {
+      const tabKey = button.getAttribute('data-admin-management-tab') || 'list';
+      const isActive = tabKey === state.adminManagementView;
+      if (isActive) {
+        button.classList.add('admin-management-tab--active');
+      } else {
+        button.classList.remove('admin-management-tab--active');
+      }
+      button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+  }
+
+  const panels = elements.adminManagementPanels;
+  if (panels && panels.length) {
+    panels.forEach((panel) => {
+      const panelKey = panel.getAttribute('data-admin-management-panel') || '';
+      if (panelKey === state.adminManagementView) {
+        showElement(panel);
+      } else {
+        hideElement(panel);
+      }
+    });
+  }
+}
+
+function setAdminManagementView(view) {
+  const normalizedView = view === 'create' ? 'create' : 'list';
+  if (state.adminManagementView !== normalizedView) {
+    state.adminManagementView = normalizedView;
+    if (state.currentUser?.role === 'admin') {
+      persistSessionState();
+    }
+  }
+
+  renderAdminManagementTabs();
+}
+
+function renderAdminManagement() {
+  if (!elements.adminManagementSection) {
+    return;
+  }
+
+  if (state.currentUser?.adminLevel !== 'superadmin') {
+    hideElement(elements.adminManagementSection);
+    return;
+  }
+
+  showElement(elements.adminManagementSection);
+  renderAdminManagementTabs();
+
+  if (elements.adminManagementStatus) {
+    elements.adminManagementStatus.textContent = '';
+    elements.adminManagementStatus.classList.add('hidden');
+  }
+
+  const listContainer = elements.adminManagementList;
+  if (!listContainer) {
+    return;
+  }
+
+  listContainer.innerHTML = '';
+
+  if (!state.admins.length) {
+    const empty = document.createElement('p');
+    empty.className = 'text-sm text-gray-500';
+    empty.textContent = 'Aucun administrateur enregistré.';
+    listContainer.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement('ul');
+  list.className = 'space-y-3';
+
+  state.admins.forEach((admin) => {
+    const isEditing = state.adminEdit.id === admin.id;
+
+    if (isEditing) {
+      const item = document.createElement('li');
+      item.className = 'border border-gray-200 rounded-md px-4 py-4 bg-white shadow-sm space-y-4';
+
+      const header = document.createElement('div');
+      header.className = 'flex flex-wrap items-center gap-2';
+      const title = document.createElement('div');
+      title.className = 'font-medium text-gray-800';
+      title.textContent = `Modifier ${admin.firstName} ${admin.lastName}`;
+      header.appendChild(title);
+
+      const roleBadge = document.createElement('span');
+      roleBadge.className =
+        'inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-xs';
+      roleBadge.textContent = formatAdminLevel(state.adminEdit.role || admin.role);
+      header.appendChild(roleBadge);
+
+      item.appendChild(header);
+
+      const form = document.createElement('form');
+      form.className = 'grid grid-cols-1 md:grid-cols-2 gap-3';
+      form.addEventListener('submit', (event) => handleAdminUpdate(event, admin.id));
+
+      const firstNameField = document.createElement('div');
+      const firstNameInputId = `admin-edit-first-${admin.id}`;
+      const firstNameLabel = document.createElement('label');
+      firstNameLabel.className = 'form-label';
+      firstNameLabel.setAttribute('for', firstNameInputId);
+      firstNameLabel.textContent = 'Prénom';
+      const firstNameInput = document.createElement('input');
+      firstNameInput.id = firstNameInputId;
+      firstNameInput.type = 'text';
+      firstNameInput.required = true;
+      firstNameInput.className = 'form-input';
+      firstNameInput.value = state.adminEdit.firstName;
+      firstNameInput.addEventListener('input', (event) => {
+        updateAdminEditField('firstName', event.target.value);
+      });
+      firstNameField.appendChild(firstNameLabel);
+      firstNameField.appendChild(firstNameInput);
+
+      const lastNameField = document.createElement('div');
+      const lastNameInputId = `admin-edit-last-${admin.id}`;
+      const lastNameLabel = document.createElement('label');
+      lastNameLabel.className = 'form-label';
+      lastNameLabel.setAttribute('for', lastNameInputId);
+      lastNameLabel.textContent = 'Nom';
+      const lastNameInput = document.createElement('input');
+      lastNameInput.id = lastNameInputId;
+      lastNameInput.type = 'text';
+      lastNameInput.required = true;
+      lastNameInput.className = 'form-input';
+      lastNameInput.value = state.adminEdit.lastName;
+      lastNameInput.addEventListener('input', (event) => {
+        updateAdminEditField('lastName', event.target.value);
+      });
+      lastNameField.appendChild(lastNameLabel);
+      lastNameField.appendChild(lastNameInput);
+
+      const identifierField = document.createElement('div');
+      identifierField.className = 'md:col-span-2';
+      const identifierInputId = `admin-edit-identifier-${admin.id}`;
+      const identifierLabel = document.createElement('label');
+      identifierLabel.className = 'form-label';
+      identifierLabel.setAttribute('for', identifierInputId);
+      identifierLabel.textContent = 'Identifiant de connexion';
+      const identifierInput = document.createElement('input');
+      identifierInput.id = identifierInputId;
+      identifierInput.type = 'text';
+      identifierInput.required = true;
+      identifierInput.className = 'form-input font-mono';
+      identifierInput.autocomplete = 'off';
+      identifierInput.value = state.adminEdit.identifier;
+      identifierInput.addEventListener('input', (event) => {
+        const sanitized = event.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+        event.target.value = sanitized;
+        updateAdminEditField('identifier', sanitized);
+      });
+      const identifierHelp = document.createElement('p');
+      identifierHelp.className = 'text-xs text-gray-500 mt-1';
+      identifierHelp.textContent = 'Utilisé pour se connecter (lettres minuscules, chiffres, ".", "-", "_").';
+      identifierField.appendChild(identifierLabel);
+      identifierField.appendChild(identifierInput);
+      identifierField.appendChild(identifierHelp);
+
+      const roleField = document.createElement('div');
+      const roleSelectId = `admin-edit-role-${admin.id}`;
+      const roleLabel = document.createElement('label');
+      roleLabel.className = 'form-label';
+      roleLabel.setAttribute('for', roleSelectId);
+      roleLabel.textContent = "Niveau d'accès";
+      const roleSelect = document.createElement('select');
+      roleSelect.id = roleSelectId;
+      roleSelect.className = 'form-input';
+      ['manager', 'standard'].forEach((value) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = formatAdminLevel(value);
+        roleSelect.appendChild(option);
+      });
+      roleSelect.value = state.adminEdit.role || 'standard';
+      roleSelect.addEventListener('change', (event) => {
+        updateAdminEditField('role', event.target.value);
+        roleBadge.textContent = formatAdminLevel(event.target.value);
+      });
+      roleField.appendChild(roleLabel);
+      roleField.appendChild(roleSelect);
+
+      const actionsRow = document.createElement('div');
+      actionsRow.className = 'md:col-span-2 flex justify-end gap-2';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'btn-secondary';
+      cancelBtn.textContent = 'Annuler';
+      cancelBtn.addEventListener('click', cancelAdminEdit);
+
+      const submitBtn = document.createElement('button');
+      submitBtn.type = 'submit';
+      submitBtn.className = 'btn-primary flex items-center';
+      submitBtn.disabled = state.adminEdit.saving;
+      submitBtn.innerHTML = state.adminEdit.saving
+        ? '<i class="fas fa-spinner fa-spin mr-2"></i>Enregistrement...'
+        : '<i class="fas fa-save mr-2"></i>Enregistrer';
+
+      actionsRow.appendChild(cancelBtn);
+      actionsRow.appendChild(submitBtn);
+
+      form.appendChild(firstNameField);
+      form.appendChild(lastNameField);
+      form.appendChild(identifierField);
+      form.appendChild(roleField);
+      form.appendChild(actionsRow);
+
+      item.appendChild(form);
+      list.appendChild(item);
+      return;
+    }
+
+    const item = document.createElement('li');
+    item.className =
+      'border border-gray-200 rounded-md px-4 py-3 bg-white shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3';
+
+    const info = document.createElement('div');
+    info.innerHTML = `
+      <div class="font-medium text-gray-800">${admin.firstName} ${admin.lastName}</div>
+      <div class="text-xs text-gray-500 flex flex-wrap gap-2 items-center mt-1">
+        <span>Identifiant : <span class="font-mono">${admin.identifier}</span></span>
+        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">${formatAdminLevel(admin.role)}</span>
+      </div>
+    `;
+
+    const actions = document.createElement('div');
+    actions.className = 'flex flex-wrap items-center gap-2';
+
+    if (admin.identifier.toLowerCase() === 'lsaquet') {
+      const badge = document.createElement('span');
+      badge.className = 'text-xs text-green-600 font-semibold';
+      badge.textContent = 'Compte principal';
+      actions.appendChild(badge);
+    } else {
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'btn-secondary text-xs';
+      editBtn.textContent = 'Modifier';
+      editBtn.addEventListener('click', () => startAdminEdit(admin));
+      actions.appendChild(editBtn);
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'btn-danger text-xs';
+      deleteBtn.textContent = 'Supprimer';
+      deleteBtn.addEventListener('click', () => handleAdminDeletion(admin.id));
+      actions.appendChild(deleteBtn);
+    }
+
+    item.appendChild(info);
+    item.appendChild(actions);
+    list.appendChild(item);
+  });
+
+  listContainer.appendChild(list);
+}
+
+async function logout(event) {
+  if (event?.preventDefault) {
+    event.preventDefault();
+  }
+
+  if (state.currentUser?.role === 'admin' && state.currentUser?.token) {
+    try {
+      await apiFetch('/admins/logout', { method: 'POST' });
+    } catch (error) {
+      console.warn('Erreur lors de la fermeture de session administrateur', error);
+    }
+  }
+
   state.currentUser = null;
   state.isAdmin = false;
+  state.driverSearchResults = [];
+  state.adminDrivers = [];
   state.driverCourses = [];
   state.adminCourses = [];
   state.archivedCourses = [];
+  state.activeDriverTab = 'today';
   state.adminFilters = { driverId: 'all', range: 'week' };
   state.archiveFilters = { driverId: 'all', merchandise: 'all', period: 'week', from: null, to: null };
+  state.settings = {
+    emailRecipient: '',
+    loaded: false,
+    saving: false,
+    activeTab: 'email',
+  };
+  state.adminManagementView = 'list';
+  state.driverPasswordManagement = { drivers: [], loading: false, editingDriverId: null };
+  state.driverManagement.expanded = false;
+  state.driverManagement.loading = false;
+  state.driverManagement.error = null;
   state.activityLog = [];
   state.courseCache.clear();
+  resetAdminEditState();
+  resetMessagingState();
   elements.lastnameInput.value = '';
   elements.driverList.innerHTML = '';
   hideElement(elements.driverDashboard);
@@ -524,6 +1245,7 @@ function logout() {
   hideElement(elements.courseModal);
   closePhotoModal();
   closeCourseEditor();
+  closeDriverPasswordModal();
   closeAdminLoginModal();
   if (elements.adminIdentifierDisplay) {
     elements.adminIdentifierDisplay.textContent = '';
@@ -543,13 +1265,29 @@ function logout() {
   if (elements.archivePeriodFilter) {
     elements.archivePeriodFilter.value = 'week';
   }
+  if (elements.emailRecipientInput) {
+    elements.emailRecipientInput.value = '';
+  }
+  resetEmailSettingsStatus();
+  if (elements.adminPasswordForm) {
+    elements.adminPasswordForm.reset();
+  }
+  if (elements.adminPasswordFeedback) {
+    elements.adminPasswordFeedback.textContent = '';
+    elements.adminPasswordFeedback.classList.add('hidden');
+  }
+  renderDriverManagementPanel();
+  renderSettingsTabs();
+  state.adminView = 'planning';
   updateAdminRangeButtons();
   updateArchivePeriodInputs();
   showElement(elements.loginPage);
   switchTab('today');
+  clearPersistedSession();
 }
 
 function switchTab(tab) {
+  state.activeDriverTab = tab;
   const tabs = [elements.todayTab, elements.weekTab, elements.newCourseTab];
   tabs.forEach((tabElement) => {
     tabElement.classList.remove('tab-button--active');
@@ -576,33 +1314,69 @@ function switchTab(tab) {
     showElement(elements.newCourseForm);
     elements.adminDriverField.classList.toggle('hidden', !state.isAdmin);
   }
+
+  if (state.currentUser) {
+    persistSessionState();
+  }
 }
 
 function switchAdminView(view) {
   state.adminView = view;
 
-  if (!elements.adminPlanningView || !elements.adminArchiveView) {
-    return;
+  const configurations = [
+    { key: 'planning', tab: elements.adminPlanningTab, panel: elements.adminPlanningView },
+    { key: 'archives', tab: elements.adminArchivesTab, panel: elements.adminArchiveView },
+    { key: 'settings', tab: elements.adminSettingsTab, panel: elements.adminSettingsView },
+  ];
+
+  configurations.forEach(({ key, tab, panel }) => {
+    if (!tab || !panel) {
+      return;
+    }
+    if (key === view) {
+      showElement(panel);
+      tab.classList.add('admin-tab--active');
+    } else {
+      hideElement(panel);
+      tab.classList.remove('admin-tab--active');
+    }
+  });
+
+  if (view === 'planning') {
+    updateAdminRangeButtons();
   }
 
-  const planningActive = view === 'planning';
-
-  if (planningActive) {
-    showElement(elements.adminPlanningView);
-    hideElement(elements.adminArchiveView);
-    elements.adminPlanningTab?.classList.add('admin-tab--active');
-    elements.adminArchivesTab?.classList.remove('admin-tab--active');
-  } else {
-    hideElement(elements.adminPlanningView);
-    showElement(elements.adminArchiveView);
-    elements.adminArchivesTab?.classList.add('admin-tab--active');
-    elements.adminPlanningTab?.classList.remove('admin-tab--active');
+  if (view === 'archives') {
     updateArchivePeriodInputs();
     if (!state.archivedCourses.length) {
       loadArchivedCourses();
     } else {
       renderArchivedCourses();
     }
+  }
+
+  if (view === 'settings') {
+    ensureSettingsData();
+  }
+
+  if (state.currentUser?.role === 'admin') {
+    persistSessionState();
+  }
+}
+
+function renderDriverManagementPanel() {
+  if (!elements.driverManagementPanel || !elements.driverManagementToggle) {
+    return;
+  }
+
+  if (state.driverManagement.expanded) {
+    showElement(elements.driverManagementPanel);
+    elements.driverManagementToggle.textContent = 'Masquer la gestion des chauffeurs';
+    elements.driverManagementToggle.setAttribute('aria-expanded', 'true');
+  } else {
+    hideElement(elements.driverManagementPanel);
+    elements.driverManagementToggle.textContent = 'Afficher la gestion des chauffeurs';
+    elements.driverManagementToggle.setAttribute('aria-expanded', 'false');
   }
 }
 
@@ -618,6 +1392,81 @@ function updateAdminRangeButtons() {
       button.classList.remove('filter-chip--active');
     }
   });
+  updateAdminDateInputs();
+}
+
+function renderSettingsTabs() {
+  if (elements.settingsTabButtons) {
+    elements.settingsTabButtons.forEach((button) => {
+      const tabKey = button.getAttribute('data-settings-tab');
+      const isAdminTab = tabKey === 'admins';
+      if (isAdminTab && state.currentUser?.adminLevel !== 'superadmin') {
+        button.classList.add('hidden');
+      } else {
+        button.classList.remove('hidden');
+      }
+
+      if (tabKey === state.settings.activeTab) {
+        button.classList.add('settings-tab--active');
+      } else {
+        button.classList.remove('settings-tab--active');
+      }
+    });
+  }
+
+  if (elements.settingsPanels) {
+    elements.settingsPanels.forEach((panel) => {
+      const panelKey = panel.getAttribute('data-settings-panel');
+      const isAdminPanel = panelKey === 'admins';
+      if (isAdminPanel && state.currentUser?.adminLevel !== 'superadmin') {
+        hideElement(panel);
+        return;
+      }
+      if (panelKey === state.settings.activeTab) {
+        showElement(panel);
+      } else {
+        hideElement(panel);
+      }
+    });
+  }
+
+  if (state.currentUser?.adminLevel === 'superadmin') {
+    renderAdminManagementTabs();
+  }
+}
+
+function ensureSettingsData(tab = state.settings.activeTab) {
+  if (!state.isAdmin) {
+    return;
+  }
+
+  if (tab === 'email') {
+    loadEmailRecipient();
+  } else if (tab === 'drivers') {
+    loadDriverCredentials();
+  } else if (tab === 'admins' && state.currentUser?.adminLevel === 'superadmin') {
+    if (!state.admins.length) {
+      loadAdmins();
+    } else {
+      renderAdminManagement();
+    }
+  }
+}
+
+function setSettingsTab(tab) {
+  if (tab === 'admins' && state.currentUser?.adminLevel !== 'superadmin') {
+    return;
+  }
+
+  if (state.settings.activeTab !== tab) {
+    state.settings.activeTab = tab;
+    renderSettingsTabs();
+    if (state.currentUser?.role === 'admin') {
+      persistSessionState();
+    }
+  }
+
+  ensureSettingsData(tab);
 }
 
 async function loadDriverCourses() {
@@ -645,10 +1494,18 @@ async function loadDriverCourses() {
   }
 }
 
-async function loadAdminDrivers() {
+async function loadAdminDrivers({ force = false } = {}) {
+  if (state.driverManagement.loading && !force) {
+    return;
+  }
+
+  state.driverManagement.loading = true;
+  state.driverManagement.error = null;
+  renderDriverManagement();
+
   try {
     const drivers = await apiFetch('/drivers');
-    state.drivers = drivers.map(normalizeDriver);
+    state.adminDrivers = drivers.map(normalizeDriver);
     const selectedDriverFilter = state.adminFilters.driverId || 'all';
 
     elements.adminDriverSelect.innerHTML = '<option value="all">Tous les chauffeurs</option>';
@@ -658,7 +1515,7 @@ async function loadAdminDrivers() {
       elements.archiveDriverFilter.innerHTML = '<option value="all">Tous les chauffeurs</option>';
     }
 
-    state.drivers.forEach((driver) => {
+    state.adminDrivers.forEach((driver) => {
       const label = `${driver.firstName} ${driver.lastName}`;
       const option = document.createElement('option');
       option.value = driver.id;
@@ -681,10 +1538,12 @@ async function loadAdminDrivers() {
     if (elements.archiveDriverFilter) {
       elements.archiveDriverFilter.value = state.archiveFilters.driverId || 'all';
     }
-
-    renderDriverManagement();
   } catch (error) {
     console.error('Erreur lors du chargement des chauffeurs', error);
+    state.driverManagement.error = error.message || 'Impossible de récupérer les chauffeurs.';
+  } finally {
+    state.driverManagement.loading = false;
+    renderDriverManagement();
   }
 }
 
@@ -695,7 +1554,23 @@ function renderDriverManagement() {
 
   elements.driverListContainer.innerHTML = '';
 
-  if (!state.drivers.length) {
+  if (state.driverManagement.loading) {
+    const loading = document.createElement('p');
+    loading.className = 'text-sm text-gray-500';
+    loading.textContent = 'Chargement des chauffeurs...';
+    elements.driverListContainer.appendChild(loading);
+    return;
+  }
+
+  if (state.driverManagement.error) {
+    const error = document.createElement('p');
+    error.className = 'text-sm text-red-600';
+    error.textContent = state.driverManagement.error;
+    elements.driverListContainer.appendChild(error);
+    return;
+  }
+
+  if (!state.adminDrivers.length) {
     const empty = document.createElement('p');
     empty.className = 'text-sm text-gray-500';
     empty.textContent = 'Aucun chauffeur enregistré.';
@@ -706,7 +1581,7 @@ function renderDriverManagement() {
   const list = document.createElement('ul');
   list.className = 'divide-y divide-gray-200';
 
-  state.drivers.forEach((driver) => {
+  state.adminDrivers.forEach((driver) => {
     const item = document.createElement('li');
     item.className = 'flex items-center justify-between py-2';
     item.innerHTML = `
@@ -744,7 +1619,7 @@ async function handleAddDriver(event) {
     });
 
     elements.driverManagementForm.reset();
-    await loadAdminDrivers();
+    await loadAdminDrivers({ force: true });
     await loadAdminCourses();
   } catch (error) {
     console.error('Erreur lors de l\'ajout du chauffeur', error);
@@ -759,7 +1634,7 @@ async function handleDeleteDriver(driverId) {
 
   try {
     await apiFetch(`/drivers/${driverId}`, { method: 'DELETE' });
-    await loadAdminDrivers();
+    await loadAdminDrivers({ force: true });
     await loadAdminCourses();
     await loadArchivedCourses();
     await loadActivityLog();
@@ -805,8 +1680,7 @@ async function unarchiveCourse(courseId) {
   }
 }
 
-async function loadAdminCourses() {
-  const params = new URLSearchParams();
+function resolveAdminRange() {
   const today = startOfDay(new Date());
   let from = null;
   let to = null;
@@ -817,13 +1691,77 @@ async function loadAdminCourses() {
       to = addDays(today, 1);
       break;
     case 'week':
-      from = addDays(today, -7);
-      to = addDays(today, 7);
+      from = addDays(today, -3);
+      to = addDays(today, 4);
       break;
-    case 'all':
+    case 'month': {
+      const start = new Date(today);
+      start.setDate(1);
+      from = startOfDay(start);
+      const end = new Date(start);
+      end.setMonth(end.getMonth() + 1);
+      to = startOfDay(end);
+      break;
+    }
+    case 'custom': {
+      if (state.adminFilters.from) {
+        const start = startOfDay(new Date(state.adminFilters.from));
+        if (!Number.isNaN(start.getTime())) {
+          from = start;
+        }
+      }
+      if (state.adminFilters.to) {
+        const end = startOfDay(new Date(state.adminFilters.to));
+        if (!Number.isNaN(end.getTime())) {
+          to = addDays(end, 1);
+        }
+      }
+      break;
+    }
     default:
       break;
   }
+
+  return { from, to };
+}
+
+function updateAdminDateInputs() {
+  const isCustom = state.adminFilters.range === 'custom';
+  if (elements.adminFromInput) {
+    elements.adminFromInput.disabled = !isCustom;
+    elements.adminFromInput.value = isCustom && state.adminFilters.from ? state.adminFilters.from : '';
+  }
+  if (elements.adminToInput) {
+    elements.adminToInput.disabled = !isCustom;
+    elements.adminToInput.value = isCustom && state.adminFilters.to ? state.adminFilters.to : '';
+  }
+}
+
+function syncAdminFiltersToInputs() {
+  if (elements.adminDriverSelect) {
+    elements.adminDriverSelect.value = state.adminFilters.driverId || 'all';
+  }
+  if (elements.adminStatusFilter) {
+    elements.adminStatusFilter.value = state.adminFilters.status || 'all';
+  }
+  if (elements.adminMerchandiseFilter) {
+    elements.adminMerchandiseFilter.value = state.adminFilters.merchandise || 'all';
+  }
+  if (elements.adminIssueFilter) {
+    elements.adminIssueFilter.value = state.adminFilters.issue || 'all';
+  }
+  if (elements.adminPhotoFilter) {
+    elements.adminPhotoFilter.value = state.adminFilters.hasPhoto || 'all';
+  }
+  if (elements.adminSearchFilter) {
+    elements.adminSearchFilter.value = state.adminFilters.search || '';
+  }
+  updateAdminRangeButtons();
+}
+
+async function loadAdminCourses() {
+  const params = new URLSearchParams();
+  const { from, to } = resolveAdminRange();
 
   if (from) {
     params.append('from', from.toISOString());
@@ -836,12 +1774,262 @@ async function loadAdminCourses() {
     params.append('driverId', state.adminFilters.driverId);
   }
 
+  if (state.adminFilters.status && state.adminFilters.status !== 'all') {
+    params.append('status', state.adminFilters.status);
+  }
+
+  if (state.adminFilters.merchandise && state.adminFilters.merchandise !== 'all') {
+    params.append('merchandise', state.adminFilters.merchandise);
+  }
+
+  if (state.adminFilters.issue === 'issues') {
+    params.append('issue', 'reported');
+  } else if (state.adminFilters.issue === 'clear') {
+    params.append('issue', 'none');
+  }
+
+  if (state.adminFilters.hasPhoto === 'with') {
+    params.append('hasPhoto', 'true');
+  } else if (state.adminFilters.hasPhoto === 'without') {
+    params.append('hasPhoto', 'false');
+  }
+
+  if (state.adminFilters.search) {
+    params.append('search', state.adminFilters.search);
+  }
+
   try {
     const courses = await apiFetch(`/courses?${params.toString()}`);
     state.adminCourses = courses.map(mapCourse);
     renderAdminCourses();
   } catch (error) {
     console.error('Erreur lors du chargement des courses', error);
+  }
+}
+
+function handleAdminRangeClick(event) {
+  const button = event.target.closest('[data-admin-range]');
+  if (!button) {
+    return;
+  }
+  const range = button.getAttribute('data-admin-range') || 'all';
+  state.adminFilters.range = range;
+  if (range !== 'custom') {
+    state.adminFilters.from = null;
+    state.adminFilters.to = null;
+  }
+  updateAdminRangeButtons();
+  loadAdminCourses();
+  persistSessionState();
+}
+
+function handleAdminStatusChange() {
+  if (!elements.adminStatusFilter) {
+    return;
+  }
+  state.adminFilters.status = elements.adminStatusFilter.value || 'all';
+  loadAdminCourses();
+  persistSessionState();
+}
+
+function handleAdminMerchandiseChange() {
+  if (!elements.adminMerchandiseFilter) {
+    return;
+  }
+  state.adminFilters.merchandise = elements.adminMerchandiseFilter.value || 'all';
+  loadAdminCourses();
+  persistSessionState();
+}
+
+function handleAdminIssueChange() {
+  if (!elements.adminIssueFilter) {
+    return;
+  }
+  state.adminFilters.issue = elements.adminIssueFilter.value || 'all';
+  loadAdminCourses();
+  persistSessionState();
+}
+
+function handleAdminPhotoChange() {
+  if (!elements.adminPhotoFilter) {
+    return;
+  }
+  state.adminFilters.hasPhoto = elements.adminPhotoFilter.value || 'all';
+  loadAdminCourses();
+  persistSessionState();
+}
+
+function handleAdminDateChange() {
+  if (!elements.adminFromInput || !elements.adminToInput) {
+    return;
+  }
+  if (state.adminFilters.range !== 'custom') {
+    state.adminFilters.range = 'custom';
+  }
+  state.adminFilters.from = elements.adminFromInput.value || null;
+  state.adminFilters.to = elements.adminToInput.value || null;
+  updateAdminRangeButtons();
+  loadAdminCourses();
+  persistSessionState();
+}
+
+function scheduleAdminSearch() {
+  if (adminSearchTimer) {
+    clearTimeout(adminSearchTimer);
+  }
+  adminSearchTimer = setTimeout(() => {
+    loadAdminCourses();
+    persistSessionState();
+  }, 300);
+}
+
+function handleAdminSearchInput(event) {
+  state.adminFilters.search = event.target.value.trim();
+  scheduleAdminSearch();
+}
+
+function resetAdminFilters() {
+  state.adminFilters = { ...DEFAULT_ADMIN_FILTERS };
+  syncAdminFiltersToInputs();
+  loadAdminCourses();
+  persistSessionState();
+}
+
+function handleDriverLayoutChange(event) {
+  const layout = event.target.getAttribute('data-driver-layout');
+  if (!layout) {
+    return;
+  }
+  state.displayPreferences.driverLayout = layout;
+  applyDisplayPreferences();
+  renderTodayCourses();
+  renderWeekCourses();
+  persistSessionState();
+}
+
+function handleDriverDensityChange(event) {
+  const density = event.target.getAttribute('data-driver-density');
+  if (!density) {
+    return;
+  }
+  state.displayPreferences.driverDensity = density;
+  applyDisplayPreferences();
+  renderTodayCourses();
+  renderWeekCourses();
+  persistSessionState();
+}
+
+function handleAdminLayoutChange(event) {
+  const layout = event.target.getAttribute('data-admin-layout');
+  if (!layout) {
+    return;
+  }
+  state.displayPreferences.adminLayout = layout;
+  applyDisplayPreferences();
+  renderAdminCourses();
+  persistSessionState();
+}
+
+function handleAdminDensityChange(event) {
+  const density = event.target.getAttribute('data-admin-density');
+  if (!density) {
+    return;
+  }
+  state.displayPreferences.adminDensity = density;
+  applyDisplayPreferences();
+  renderAdminCourses();
+  persistSessionState();
+}
+
+async function exportCourses(format, context = 'planning') {
+  if (!state.isAdmin || !state.currentUser?.token) {
+    alert('Seul un administrateur connecté peut exporter les courses.');
+    return;
+  }
+
+  const params = new URLSearchParams();
+  params.append('format', format);
+
+  if (context === 'archives') {
+    params.append('archived', 'true');
+    if (state.archiveFilters.driverId && state.archiveFilters.driverId !== 'all') {
+      params.append('driverId', state.archiveFilters.driverId);
+    }
+    if (state.archiveFilters.merchandise && state.archiveFilters.merchandise !== 'all') {
+      params.append('merchandise', state.archiveFilters.merchandise);
+    }
+    const { from, to } = resolveArchiveRange();
+    if (from) {
+      params.append('from', from.toISOString());
+    }
+    if (to) {
+      params.append('to', to.toISOString());
+    }
+  } else {
+    const { from, to } = resolveAdminRange();
+    if (from) {
+      params.append('from', from.toISOString());
+    }
+    if (to) {
+      params.append('to', to.toISOString());
+    }
+    if (state.adminFilters.driverId && state.adminFilters.driverId !== 'all') {
+      params.append('driverId', state.adminFilters.driverId);
+    }
+    if (state.adminFilters.status && state.adminFilters.status !== 'all') {
+      params.append('status', state.adminFilters.status);
+    }
+    if (state.adminFilters.merchandise && state.adminFilters.merchandise !== 'all') {
+      params.append('merchandise', state.adminFilters.merchandise);
+    }
+    if (state.adminFilters.issue === 'issues') {
+      params.append('issue', 'reported');
+    } else if (state.adminFilters.issue === 'clear') {
+      params.append('issue', 'none');
+    }
+    if (state.adminFilters.hasPhoto === 'with') {
+      params.append('hasPhoto', 'true');
+    } else if (state.adminFilters.hasPhoto === 'without') {
+      params.append('hasPhoto', 'false');
+    }
+    if (state.adminFilters.search) {
+      params.append('search', state.adminFilters.search);
+    }
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/courses/export?${params.toString()}`, {
+      headers: {
+        'X-Admin-Token': state.currentUser.token,
+      },
+    });
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.message || "Impossible de générer l'export." );
+    }
+
+    const blob = await response.blob();
+    let filename = format === 'pdf' ? 'export-courses.pdf' : 'export-courses.xlsx';
+    const disposition = response.headers.get('content-disposition');
+    if (disposition) {
+      const match = /filename="?([^";]+)"?/i.exec(disposition);
+      if (match && match[1]) {
+        filename = match[1];
+      }
+    }
+
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(downloadUrl), 1500);
+  } catch (error) {
+    console.error("Erreur lors de l'export", error);
+    alert(error.message || "Impossible de générer l'export.");
   }
 }
 
@@ -977,7 +2165,8 @@ function renderArchivedCourses() {
     });
 }
 
-function updateArchivePeriodInputs() {
+function updateArchivePeriodInputs(options = {}) {
+  const { resetValues = true } = options;
   if (!elements.archiveFromInput || !elements.archiveToInput) {
     return;
   }
@@ -989,8 +2178,13 @@ function updateArchivePeriodInputs() {
   if (!isCustom) {
     elements.archiveFromInput.value = '';
     elements.archiveToInput.value = '';
-    state.archiveFilters.from = null;
-    state.archiveFilters.to = null;
+    if (resetValues) {
+      state.archiveFilters.from = null;
+      state.archiveFilters.to = null;
+    }
+  } else {
+    elements.archiveFromInput.value = state.archiveFilters.from || '';
+    elements.archiveToInput.value = state.archiveFilters.to || '';
   }
 }
 
@@ -1001,6 +2195,9 @@ function handleArchivePeriodChange() {
   state.archiveFilters.period = elements.archivePeriodFilter.value || 'week';
   updateArchivePeriodInputs();
   loadArchivedCourses();
+  if (state.currentUser?.role === 'admin') {
+    persistSessionState();
+  }
 }
 
 function handleArchiveFiltersChange() {
@@ -1011,6 +2208,9 @@ function handleArchiveFiltersChange() {
     state.archiveFilters.merchandise = elements.archiveMerchandiseFilter.value || 'all';
   }
   loadArchivedCourses();
+  if (state.currentUser?.role === 'admin') {
+    persistSessionState();
+  }
 }
 
 function handleArchiveDatesChange() {
@@ -1020,6 +2220,359 @@ function handleArchiveDatesChange() {
   state.archiveFilters.from = elements.archiveFromInput.value || null;
   state.archiveFilters.to = elements.archiveToInput.value || null;
   loadArchivedCourses();
+  if (state.currentUser?.role === 'admin') {
+    persistSessionState();
+  }
+}
+
+function resetEmailSettingsStatus() {
+  if (!elements.emailSettingsStatus) {
+    return;
+  }
+  elements.emailSettingsStatus.textContent = '';
+  elements.emailSettingsStatus.classList.add('hidden');
+  elements.emailSettingsStatus.classList.remove('text-green-600', 'text-red-600');
+}
+
+function showEmailSettingsStatus(message, isError = false) {
+  if (!elements.emailSettingsStatus) {
+    return;
+  }
+  elements.emailSettingsStatus.textContent = message;
+  elements.emailSettingsStatus.classList.remove('hidden');
+  elements.emailSettingsStatus.classList.remove('text-green-600', 'text-red-600');
+  elements.emailSettingsStatus.classList.add(isError ? 'text-red-600' : 'text-green-600');
+}
+
+async function loadEmailRecipient(force = false) {
+  if (!elements.emailSettingsForm) {
+    return;
+  }
+
+  if (state.settings.loaded && !force) {
+    elements.emailRecipientInput.value = state.settings.emailRecipient;
+    return;
+  }
+
+  try {
+    resetEmailSettingsStatus();
+    const response = await apiFetch('/settings/email-recipient');
+    state.settings.emailRecipient = response.email || '';
+    state.settings.loaded = true;
+    elements.emailRecipientInput.value = state.settings.emailRecipient;
+  } catch (error) {
+    console.error('Erreur lors du chargement de la configuration email', error);
+    showEmailSettingsStatus(error.message || "Impossible de charger l'adresse email.", true);
+  }
+}
+
+async function handleEmailSettingsSubmit(event) {
+  event.preventDefault();
+
+  if (!elements.emailSettingsForm) {
+    return;
+  }
+
+  if (state.settings.saving) {
+    return;
+  }
+
+  const email = elements.emailRecipientInput?.value.trim() || '';
+
+  if (!email) {
+    showEmailSettingsStatus('Veuillez renseigner une adresse email.', true);
+    return;
+  }
+
+  const submitButton = elements.emailSettingsForm.querySelector('button[type="submit"]');
+
+  try {
+    state.settings.saving = true;
+    resetEmailSettingsStatus();
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.classList.add('opacity-50', 'cursor-not-allowed');
+    }
+
+    const response = await apiFetch('/settings/email-recipient', {
+      method: 'PUT',
+      body: JSON.stringify({ email }),
+    });
+
+    state.settings.emailRecipient = response.email || email;
+    state.settings.loaded = true;
+
+    elements.emailRecipientInput.value = state.settings.emailRecipient;
+
+    showEmailSettingsStatus('Adresse email mise à jour avec succès.');
+  } catch (error) {
+    console.error("Erreur lors de l'enregistrement de l'adresse email", error);
+    showEmailSettingsStatus(error.message || "Impossible de mettre à jour l'adresse email.", true);
+  } finally {
+    state.settings.saving = false;
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.classList.remove('opacity-50', 'cursor-not-allowed');
+    }
+  }
+}
+
+async function loadDriverCredentials() {
+  if (!elements.driverPasswordList || state.driverPasswordManagement.loading) {
+    return;
+  }
+
+  try {
+    state.driverPasswordManagement.loading = true;
+    const drivers = await apiFetch('/drivers/credentials');
+    state.driverPasswordManagement.drivers = drivers.map(normalizeDriver);
+    renderDriverCredentials();
+  } catch (error) {
+    console.error('Erreur lors du chargement des mots de passe chauffeurs', error);
+    if (elements.driverPasswordList) {
+      elements.driverPasswordList.innerHTML = `<p class="text-sm text-red-600">${
+        error.message || 'Impossible de récupérer les chauffeurs.'
+      }</p>`;
+    }
+  } finally {
+    state.driverPasswordManagement.loading = false;
+  }
+}
+
+function renderDriverCredentials() {
+  if (!elements.driverPasswordList) {
+    return;
+  }
+
+  const drivers = state.driverPasswordManagement.drivers || [];
+  elements.driverPasswordList.innerHTML = '';
+
+  if (!drivers.length) {
+    if (elements.driverPasswordEmpty) {
+      elements.driverPasswordEmpty.classList.remove('hidden');
+    }
+    return;
+  }
+
+  if (elements.driverPasswordEmpty) {
+    elements.driverPasswordEmpty.classList.add('hidden');
+  }
+
+  const list = document.createElement('ul');
+  list.className = 'space-y-3';
+
+  drivers.forEach((driver) => {
+    const item = document.createElement('li');
+    item.className =
+      'border border-gray-200 rounded-md px-4 py-3 bg-white shadow-sm flex flex-col gap-3';
+
+    const statusBadge = driver.hasPassword
+      ? '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs"><i class="fas fa-lock"></i> Protégé</span>'
+      : '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-xs"><i class="fas fa-unlock"></i> Aucun mot de passe</span>';
+
+    item.innerHTML = `
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <div>
+          <div class="font-medium text-gray-800">${driver.firstName} ${driver.lastName}</div>
+          <div class="text-xs text-gray-500 mt-1 flex items-center gap-2">${statusBadge}</div>
+        </div>
+      </div>
+    `;
+
+    const actionsContainer = document.createElement('div');
+    actionsContainer.className = 'flex flex-col sm:flex-row sm:items-center gap-2';
+
+    if (state.driverPasswordManagement.editingDriverId === driver.id) {
+      const form = document.createElement('form');
+      form.className = 'flex flex-col sm:flex-row gap-2 w-full';
+      form.innerHTML = `
+        <input type="password" class="form-input sm:flex-1" placeholder="Nouveau mot de passe" required />
+        <div class="flex gap-2">
+          <button type="submit" class="btn-primary text-sm">Enregistrer</button>
+          <button type="button" data-action="cancel" class="btn-secondary text-sm">Annuler</button>
+        </div>
+      `;
+      form.addEventListener('submit', (event) => handleDriverPasswordSave(event, driver.id));
+      const cancelButton = form.querySelector('[data-action="cancel"]');
+      cancelButton.addEventListener('click', () => {
+        state.driverPasswordManagement.editingDriverId = null;
+        renderDriverCredentials();
+      });
+      actionsContainer.appendChild(form);
+      setTimeout(() => {
+        form.querySelector('input')?.focus();
+      }, 0);
+    } else {
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'btn-secondary text-xs sm:text-sm';
+      editBtn.textContent = driver.hasPassword ? 'Modifier le mot de passe' : 'Définir un mot de passe';
+      editBtn.addEventListener('click', () => {
+        state.driverPasswordManagement.editingDriverId = driver.id;
+        renderDriverCredentials();
+      });
+      actionsContainer.appendChild(editBtn);
+
+      if (driver.hasPassword) {
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'btn-danger text-xs sm:text-sm';
+        removeBtn.textContent = 'Supprimer le mot de passe';
+        removeBtn.addEventListener('click', () => removeDriverPassword(driver.id));
+        actionsContainer.appendChild(removeBtn);
+      }
+    }
+
+    item.appendChild(actionsContainer);
+    list.appendChild(item);
+  });
+
+  elements.driverPasswordList.appendChild(list);
+}
+
+async function handleDriverPasswordSave(event, driverId) {
+  event.preventDefault();
+  const input = event.target.querySelector('input[type="password"]');
+  const newPassword = input?.value || '';
+
+  if (!newPassword.trim()) {
+    alert('Veuillez renseigner un mot de passe.');
+    return;
+  }
+
+  try {
+    await apiFetch(`/drivers/${driverId}/password`, {
+      method: 'PUT',
+      body: JSON.stringify({ newPassword }),
+    });
+    state.driverPasswordManagement.editingDriverId = null;
+    await loadDriverCredentials();
+  } catch (error) {
+    console.error('Erreur lors de la mise à jour du mot de passe chauffeur', error);
+    alert(error.message);
+  }
+}
+
+async function removeDriverPassword(driverId) {
+  if (!confirm('Supprimer le mot de passe de ce chauffeur ?')) {
+    return;
+  }
+
+  try {
+    await apiFetch(`/drivers/${driverId}/password`, { method: 'DELETE' });
+    state.driverPasswordManagement.editingDriverId = null;
+    await loadDriverCredentials();
+  } catch (error) {
+    console.error('Erreur lors de la suppression du mot de passe chauffeur', error);
+    alert(error.message);
+  }
+}
+
+function setAdminManagementStatus(message, isError = false) {
+  if (!elements.adminManagementStatus) {
+    if (isError) {
+      alert(message);
+    } else {
+      console.info(message);
+    }
+    return;
+  }
+
+  elements.adminManagementStatus.textContent = message;
+  elements.adminManagementStatus.classList.remove('hidden');
+  elements.adminManagementStatus.classList.remove('text-green-600', 'text-red-600');
+  elements.adminManagementStatus.classList.add(isError ? 'text-red-600' : 'text-green-600');
+}
+
+async function handleAdminCreation(event) {
+  event.preventDefault();
+
+  if (!elements.adminManagementCreateForm) {
+    return;
+  }
+
+  const firstName = elements.adminManagementFirstName?.value.trim() || '';
+  const lastName = elements.adminManagementLastName?.value.trim() || '';
+  const password = elements.adminManagementPassword?.value || '';
+  const role = elements.adminManagementRole?.value || 'standard';
+
+  if (!firstName || !lastName || !password) {
+    setAdminManagementStatus('Veuillez renseigner prénom, nom et mot de passe.', true);
+    return;
+  }
+
+  try {
+    setAdminManagementStatus('Création du compte administrateur en cours...');
+    await apiFetch('/admins', {
+      method: 'POST',
+      body: JSON.stringify({ firstName, lastName, password, role }),
+    });
+    setAdminManagementStatus('Administrateur créé avec succès. Identifiant visible dans la liste.');
+    elements.adminManagementCreateForm.reset();
+    await loadAdmins();
+  } catch (error) {
+    console.error('Erreur lors de la création du compte administrateur', error);
+    setAdminManagementStatus(error.message || 'Impossible de créer ce compte administrateur.', true);
+  }
+}
+
+async function handleAdminDeletion(adminId) {
+  if (!confirm('Supprimer cet administrateur ?')) {
+    return;
+  }
+
+  try {
+    await apiFetch(`/admins/${adminId}`, { method: 'DELETE' });
+    setAdminManagementStatus('Administrateur supprimé.');
+    await loadAdmins();
+  } catch (error) {
+    console.error('Erreur lors de la suppression du compte administrateur', error);
+    setAdminManagementStatus(error.message || 'Impossible de supprimer cet administrateur.', true);
+  }
+}
+
+function setAdminPasswordFeedback(message, isError = false) {
+  if (!elements.adminPasswordFeedback) {
+    if (isError) {
+      alert(message);
+    } else {
+      console.info(message);
+    }
+    return;
+  }
+
+  elements.adminPasswordFeedback.textContent = message;
+  elements.adminPasswordFeedback.classList.remove('hidden');
+  elements.adminPasswordFeedback.classList.remove('text-green-600', 'text-red-600');
+  elements.adminPasswordFeedback.classList.add(isError ? 'text-red-600' : 'text-green-600');
+}
+
+async function handleAdminPasswordChange(event) {
+  event.preventDefault();
+
+  if (!state.currentUser?.id) {
+    return;
+  }
+
+  const currentPassword = elements.adminPasswordCurrent?.value || '';
+  const newPassword = elements.adminPasswordNew?.value || '';
+
+  if (!newPassword.trim()) {
+    setAdminPasswordFeedback('Veuillez renseigner un nouveau mot de passe.', true);
+    return;
+  }
+
+  try {
+    await apiFetch(`/admins/${state.currentUser.id}/password`, {
+      method: 'PUT',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    setAdminPasswordFeedback('Mot de passe mis à jour avec succès.');
+    elements.adminPasswordForm?.reset();
+  } catch (error) {
+    console.error('Erreur lors du changement de mot de passe administrateur', error);
+    setAdminPasswordFeedback(error.message || 'Impossible de mettre à jour le mot de passe.', true);
+  }
 }
 
 function renderTodayCourses() {
@@ -1034,41 +2587,104 @@ function renderTodayCourses() {
 
   hideElement(elements.noCoursesToday);
 
+  const layout = state.displayPreferences.driverLayout || 'cards';
+  const commentsClass = state.displayPreferences.driverDensity === 'contrast' ? 'text-gray-800 font-medium' : 'text-gray-600';
+
+  if (layout === 'list') {
+    elements.todayList.className = 'today-list divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white';
+  } else {
+    elements.todayList.className = 'today-list space-y-3';
+  }
+
   courses
     .sort((a, b) => a.date.getTime() - b.date.getTime())
     .forEach((course) => {
       const container = document.createElement('div');
       const archived = course.isArchived;
-      const baseClasses = 'course-item bg-white p-4 rounded-lg shadow-sm border border-gray-200 transition';
-      container.className = `${baseClasses} ${archived ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`;
-      container.setAttribute('aria-disabled', archived ? 'true' : 'false');
+      const departure = escapeHtml(course.departure || '');
+      const destination = escapeHtml(course.destination || '');
+      const merchandise = escapeHtml(course.merchandise || '');
+      const comments = course.comments ? escapeHtml(course.comments) : '';
+      const issueComment = course.issueReportComment ? escapeHtml(course.issueReportComment) : '';
+      const statusMeta = getCourseStatusMeta(course);
 
-      const statusClass = archived
-        ? 'bg-gray-200 text-gray-600'
-        : course.status === 'completed'
-        ? 'bg-green-100 text-green-800'
-        : 'bg-yellow-100 text-yellow-800';
-      const statusLabel = archived
-        ? 'Archivée'
-        : course.status === 'completed'
-        ? 'Terminé'
-        : 'À faire';
-
-      container.innerHTML = `
-        <div class="flex justify-between items-start">
-          <div>
-            <div class="font-medium">${course.departure} → ${course.destination}</div>
-            <div class="text-sm text-gray-500 mt-1">${formatTime(course.date)} • ${course.merchandise}</div>
+      if (layout === 'list') {
+        container.className = `course-item course-item--list px-4 py-3 ${
+          archived ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
+        }`;
+        container.setAttribute('aria-disabled', archived ? 'true' : 'false');
+        container.innerHTML = `
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 w-full">
+            <div class="flex-1 min-w-0">
+              <div class="font-medium text-gray-800 truncate">${departure} → ${destination}</div>
+              <div class="text-sm text-gray-500 mt-1">${formatTime(course.date)} • ${merchandise || '—'}</div>
+              ${comments ? `<div class="mt-2 text-sm ${commentsClass}"><i class="fas fa-comment mr-1"></i> ${comments}</div>` : ''}
+              ${course.status === 'issue_reported' && issueComment
+                ? `<div class="mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">Problème signalé : ${issueComment}</div>`
+                : ''}
+            </div>
+            <div class="flex flex-col items-stretch sm:items-end gap-2 min-w-[150px]">
+              <span class="px-2 py-1 text-xs rounded-full ${statusMeta.className} text-center">${statusMeta.label}</span>
+              ${
+                !archived && course.status !== 'completed' && course.status !== 'issue_reported'
+                  ? '<button type="button" class="inline-flex items-center justify-center px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 issue-toggle"><i class="fas fa-exclamation-triangle mr-2"></i>Signaler</button>'
+                  : ''
+              }
+            </div>
           </div>
-          <span class="px-2 py-1 text-xs rounded-full ${statusClass}">
-            ${statusLabel}
-          </span>
-        </div>
-        ${course.comments ? `<div class="mt-2 text-sm text-gray-600"><i class="fas fa-comment mr-1"></i> ${course.comments}</div>` : ''}
-      `;
+        `;
+      } else {
+        const baseClasses = 'course-item bg-white p-4 rounded-lg shadow-sm border border-gray-200 transition';
+        container.className = `${baseClasses} ${archived ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`;
+        container.setAttribute('aria-disabled', archived ? 'true' : 'false');
+        container.innerHTML = `
+          <div class="flex justify-between items-start">
+            <div>
+              <div class="font-medium">${departure} → ${destination}</div>
+              <div class="text-sm text-gray-500 mt-1">${formatTime(course.date)} • ${merchandise || '—'}</div>
+            </div>
+            <span class="px-2 py-1 text-xs rounded-full ${statusMeta.className}">
+              ${statusMeta.label}
+            </span>
+          </div>
+          ${comments ? `<div class="mt-2 text-sm ${commentsClass}"><i class="fas fa-comment mr-1"></i> ${comments}</div>` : ''}
+        `;
+
+        if (course.status === 'issue_reported' && issueComment) {
+          const issueNotice = document.createElement('div');
+          issueNotice.className = 'mt-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2';
+          issueNotice.textContent = `Problème signalé : ${issueComment || 'Détail non renseigné'}`;
+          container.appendChild(issueNotice);
+        }
+
+        if (!archived && course.status !== 'completed' && course.status !== 'issue_reported') {
+          const buttonWrapper = document.createElement('div');
+          buttonWrapper.className = 'mt-3 flex justify-end';
+          const issueButton = document.createElement('button');
+          issueButton.type = 'button';
+          issueButton.className = 'inline-flex items-center px-3 py-1.5 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 issue-toggle';
+          issueButton.innerHTML = '<i class="fas fa-exclamation-triangle mr-2"></i>Signaler un problème';
+          issueButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            openCourseIssueModal(course.id);
+          });
+          buttonWrapper.appendChild(issueButton);
+          container.appendChild(buttonWrapper);
+        }
+      }
 
       if (!archived) {
         container.addEventListener('click', () => openCourseModal(course.id));
+      }
+
+      if (layout === 'list') {
+        const issueButton = container.querySelector('.issue-toggle');
+        if (issueButton) {
+          issueButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            openCourseIssueModal(course.id);
+          });
+        }
       }
 
       elements.todayList.appendChild(container);
@@ -1091,29 +2707,31 @@ function renderWeekCourses() {
     .forEach((course) => {
       const row = document.createElement('tr');
       const archived = course.isArchived;
-      row.className = `${archived ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'hover:bg-gray-50 cursor-pointer'}`;
+      row.className = `${archived ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'hover:bg-gray-50 cursor-pointer'} driver-week-row`;
       row.setAttribute('aria-disabled', archived ? 'true' : 'false');
 
-      const statusClass = archived
-        ? 'bg-gray-200 text-gray-600'
-        : course.status === 'completed'
-        ? 'bg-green-100 text-green-800'
-        : 'bg-yellow-100 text-yellow-800';
-      const statusLabel = archived
-        ? 'Archivée'
-        : course.status === 'completed'
-        ? 'Terminé'
-        : 'À faire';
+      const statusMeta = getCourseStatusMeta(course, {
+        archivedClass: 'bg-gray-300 text-gray-700',
+      });
+      const dateLabel = formatDate(course.date);
+      const departure = escapeHtml(course.departure || '');
+      const destination = escapeHtml(course.destination || '');
+      const issueText = course.issueReportComment ? escapeHtml(course.issueReportComment) : '';
 
       row.innerHTML = `
-        <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Date">${formatDate(course.date)}</td>
-        <td class="px-6 py-4 text-sm" data-label="Départ">${course.departure}</td>
-        <td class="px-6 py-4 text-sm" data-label="Arrivée">${course.destination}</td>
+        <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Date">${dateLabel}</td>
+        <td class="px-6 py-4 text-sm" data-label="Départ">${departure}</td>
+        <td class="px-6 py-4 text-sm" data-label="Arrivée">${destination}</td>
         <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Horaire">${formatTime(course.date)}</td>
         <td class="px-6 py-4" data-label="Statut">
-          <span class="px-2 py-1 text-xs rounded-full ${statusClass}">
-            ${statusLabel}
-          </span>
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <span class="px-2 py-1 text-xs rounded-full ${statusMeta.className}">
+              ${statusMeta.label}
+            </span>
+            ${!archived && course.status !== 'completed' && course.status !== 'issue_reported'
+              ? '<button type="button" class="issue-button text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-md px-2 py-1 hover:bg-red-100"><i class="fas fa-exclamation-triangle mr-1"></i>Signaler un problème</button>'
+              : ''}
+          </div>
         </td>
       `;
 
@@ -1121,39 +2739,145 @@ function renderWeekCourses() {
         row.addEventListener('click', () => openCourseModal(course.id));
       }
 
-      elements.weekList.appendChild(row);
+      if (course.status === 'issue_reported' && course.issueReportComment) {
+        const detailRow = document.createElement('tr');
+        detailRow.className = 'bg-red-50';
+        const cell = document.createElement('td');
+        cell.colSpan = 5;
+        cell.className = 'px-6 py-3 text-sm text-red-700 border-t border-red-100';
+        const issueLabel = issueText || 'Détail non renseigné';
+        cell.innerHTML = `<i class="fas fa-circle-exclamation mr-2"></i>Problème signalé : ${issueLabel}`;
+        detailRow.appendChild(cell);
+        elements.weekList.appendChild(row);
+        elements.weekList.appendChild(detailRow);
+      } else {
+        elements.weekList.appendChild(row);
+      }
+
+      const issueButton = row.querySelector('.issue-button');
+      if (issueButton) {
+        issueButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          openCourseIssueModal(course.id);
+        });
+      }
     });
 }
 
 function renderAdminCourses() {
   elements.adminWeekList.innerHTML = '';
 
+  if (elements.adminCardList) {
+    elements.adminCardList.innerHTML = '';
+  }
+
   if (!state.adminCourses.length) {
     showElement(elements.noCoursesAdmin);
+    if (elements.adminCardList) {
+      hideElement(elements.adminCardList);
+    }
     return;
   }
 
   hideElement(elements.noCoursesAdmin);
 
+  const layout = state.displayPreferences.adminLayout || 'table';
+  if (layout === 'cards' && elements.adminCardList) {
+    hideElement(elements.adminTableWrapper);
+    showElement(elements.adminCardList);
+  } else {
+    showElement(elements.adminTableWrapper);
+    hideElement(elements.adminCardList);
+  }
+
   state.adminCourses
     .slice()
     .sort((a, b) => a.date.getTime() - b.date.getTime())
     .forEach((course) => {
+      const statusMeta = getCourseStatusMeta(course, {
+        archivedClass: 'bg-gray-200 text-gray-600',
+      });
+      const dateLabel = formatDate(course.date);
+      const timeLabel = formatTime(course.date);
+      const driverName = escapeHtml(course.driverName || '');
+      const departure = escapeHtml(course.departure || '');
+      const destination = escapeHtml(course.destination || '');
+      const merchandise = escapeHtml(course.merchandise || '');
+      const comments = course.comments ? escapeHtml(course.comments) : '';
+
+      if (layout === 'cards' && elements.adminCardList) {
+        const card = document.createElement('div');
+        card.className = 'admin-course-card bg-white border border-gray-200 rounded-lg p-4 shadow-sm';
+        card.innerHTML = `
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="text-sm text-gray-500">${dateLabel} • ${timeLabel}</div>
+              <div class="font-semibold text-gray-900 mt-1">${driverName || '—'}</div>
+              <div class="text-sm text-gray-700 mt-2">${departure} → ${destination}</div>
+              <div class="text-xs text-gray-500 mt-1">${merchandise || '—'}</div>
+              ${comments ? `<div class="mt-2 text-sm text-gray-600"><i class="fas fa-comment mr-1"></i> ${comments}</div>` : ''}
+            </div>
+            <div class="flex flex-col items-end gap-2">
+              <span class="px-2 py-1 text-xs rounded-full ${statusMeta.className}">${statusMeta.label}</span>
+              ${course.status === 'issue_reported'
+                ? '<span class="text-xs font-medium text-red-700"><i class="fas fa-circle-exclamation mr-1"></i>Problème en attente</span>'
+                : ''}
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-3 mt-4 justify-end" data-card-actions>
+            <button class="text-amber-600 hover:text-amber-800" data-action="archive" aria-label="Archiver la course">
+              <i class="fas fa-box-archive"></i>
+            </button>
+            <button class="text-blue-600 hover:text-blue-900" data-action="edit" aria-label="Modifier la course">
+              <i class="fas fa-edit"></i>
+            </button>
+            <button class="text-red-600 hover:text-red-900" data-action="delete" aria-label="Supprimer la course">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>
+        `;
+
+        const actions = card.querySelector('[data-card-actions]');
+        const archiveBtn = actions?.querySelector('[data-action="archive"]');
+        const editBtn = actions?.querySelector('[data-action="edit"]');
+        const deleteBtn = actions?.querySelector('[data-action="delete"]');
+
+        archiveBtn?.addEventListener('click', (event) => {
+          event.stopPropagation();
+          archiveCourse(course.id);
+        });
+        editBtn?.addEventListener('click', (event) => {
+          event.stopPropagation();
+          openCourseEditor(course);
+        });
+        deleteBtn?.addEventListener('click', (event) => {
+          event.stopPropagation();
+          deleteCourse(course.id);
+        });
+
+        card.addEventListener('click', () => openCourseModal(course.id));
+        elements.adminCardList.appendChild(card);
+        return;
+      }
+
       const row = document.createElement('tr');
-      row.className = 'hover:bg-gray-50';
-      const statusClass =
-        course.status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
+      row.className = 'hover:bg-gray-50 admin-course-row';
 
       row.innerHTML = `
-        <td class="px-6 py-4 text-sm" data-label="Chauffeur">${course.driverName || ''}</td>
-        <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Date">${formatDate(course.date)}</td>
-        <td class="px-6 py-4 text-sm" data-label="Départ">${course.departure}</td>
-        <td class="px-6 py-4 text-sm" data-label="Arrivée">${course.destination}</td>
-        <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Horaire">${formatTime(course.date)}</td>
+        <td class="px-6 py-4 text-sm" data-label="Chauffeur">${driverName}</td>
+        <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Date">${dateLabel}</td>
+        <td class="px-6 py-4 text-sm" data-label="Départ">${departure}</td>
+        <td class="px-6 py-4 text-sm" data-label="Arrivée">${destination}</td>
+        <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Horaire">${timeLabel}</td>
         <td class="px-6 py-4" data-label="Statut">
-          <span class="px-2 py-1 text-xs rounded-full ${statusClass}">
-            ${course.status === 'completed' ? 'Terminé' : 'À faire'}
-          </span>
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <span class="px-2 py-1 text-xs rounded-full ${statusMeta.className}">
+              ${statusMeta.label}
+            </span>
+            ${course.status === 'issue_reported'
+              ? '<span class="text-xs font-medium text-red-700"><i class="fas fa-circle-exclamation mr-1"></i>Problème en attente</span>'
+              : ''}
+          </div>
         </td>
         <td class="px-6 py-4 text-sm font-medium sm:text-right" data-label="Actions">
           <div class="flex flex-wrap gap-3 sm:justify-end">
@@ -1171,19 +2895,20 @@ function renderAdminCourses() {
       `;
 
       row.addEventListener('click', (event) => {
-        const target = event.target.closest('button');
-        if (target && target.dataset.action === 'edit') {
+        const target = event.target.closest('button[data-action]');
+        if (target) {
           event.stopPropagation();
-          editCourse(course.id);
-        } else if (target && target.dataset.action === 'archive') {
-          event.stopPropagation();
-          archiveCourse(course.id);
-        } else if (target && target.dataset.action === 'delete') {
-          event.stopPropagation();
-          deleteCourse(course.id);
-        } else {
-          openCourseModal(course.id);
+          const action = target.dataset.action;
+          if (action === 'edit') {
+            editCourse(course.id);
+          } else if (action === 'archive') {
+            archiveCourse(course.id);
+          } else if (action === 'delete') {
+            deleteCourse(course.id);
+          }
+          return;
         }
+        openCourseModal(course.id);
       });
 
       elements.adminWeekList.appendChild(row);
@@ -1249,6 +2974,8 @@ function renderActivityLog() {
           ? 'a archivé une course'
           : item.action === 'restored'
           ? 'a restauré une course'
+          : item.action === 'issue_reported'
+          ? 'a signalé un problème sur une course'
           : item.action;
       primaryText = `${item.user} ${actionText}${driverSuffix}`;
     }
@@ -1547,6 +3274,16 @@ async function openCourseModal(courseId) {
             <p class="mt-1 text-sm text-gray-900">${course.comments}</p>
           </div>
         ` : ''}
+        ${course.status === 'issue_reported' ? `
+          <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2">
+            <div class="text-sm font-medium text-red-700 flex items-center gap-2">
+              <i class="fas fa-circle-exclamation"></i>
+              <span>Problème signalé</span>
+            </div>
+            <p class="mt-2 text-sm text-red-700">${escapeHtml(course.issueReportComment || 'Commentaire non renseigné')}</p>
+            ${course.issueReportedAt ? `<p class="mt-1 text-xs text-red-500">Signalé le ${new Date(course.issueReportedAt).toLocaleString('fr-FR')}</p>` : ''}
+          </div>
+        ` : ''}
         ${course.status === 'completed' ? `
           <div>
             <h4 class="text-sm font-medium text-gray-500">Photo du bon</h4>
@@ -1581,7 +3318,14 @@ async function openCourseModal(courseId) {
       editButton.innerHTML = '<i class="fas fa-edit mr-1"></i> Modifier';
       editButton.addEventListener('click', () => editCourse(course.id));
       elements.modalActions.appendChild(editButton);
-    } else if (course.status !== 'completed' && !isArchived) {
+
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition';
+      deleteButton.innerHTML = '<i class="fas fa-trash mr-1"></i> Supprimer';
+      deleteButton.addEventListener('click', () => deleteCourse(course.id));
+      elements.modalActions.appendChild(deleteButton);
+    } else if (course.status !== 'completed' && course.status !== 'issue_reported' && !isArchived) {
       const validateButton = document.createElement('button');
       validateButton.type = 'button';
       validateButton.className = 'px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition';
@@ -1608,6 +3352,87 @@ function completeCourse(courseId) {
   openPhotoModal();
 }
 
+function stopCameraStream() {
+  if (elements.camera?.srcObject) {
+    elements.camera.srcObject.getTracks().forEach((track) => track.stop());
+    elements.camera.srcObject = null;
+  }
+}
+
+function updateCameraFacingSelect() {
+  if (elements.cameraFacingSelect) {
+    elements.cameraFacingSelect.value = state.cameraFacingMode;
+  }
+}
+
+async function startCameraStream({ fallback = true } = {}) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    if (elements.photoPlaceholder) {
+      elements.photoPlaceholder.innerHTML = `
+        <i class="fas fa-camera-slash text-4xl mb-2"></i>
+        <p>Appareil photo non disponible sur cet appareil.</p>
+      `;
+      showElement(elements.photoPlaceholder);
+    }
+    return;
+  }
+
+  const desiredFacingMode = state.cameraFacingMode === 'user' ? 'user' : 'environment';
+  const constraints = { video: { facingMode: desiredFacingMode } };
+
+  stopCameraStream();
+  showElement(elements.photoPlaceholder);
+  hideElement(elements.camera);
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    elements.camera.srcObject = stream;
+    await elements.camera.play();
+    hideElement(elements.photoPlaceholder);
+    showElement(elements.camera);
+  } catch (error) {
+    console.warn('Accès caméra refusé ou indisponible avec facingMode', desiredFacingMode, error);
+    if (fallback && desiredFacingMode === 'environment') {
+      state.cameraFacingMode = 'user';
+      updateCameraFacingSelect();
+      persistSessionState();
+      await startCameraStream({ fallback: false });
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      elements.camera.srcObject = stream;
+      await elements.camera.play();
+      state.cameraFacingMode = 'user';
+      updateCameraFacingSelect();
+      persistSessionState();
+      hideElement(elements.photoPlaceholder);
+      showElement(elements.camera);
+    } catch (innerError) {
+      console.error('Impossible de démarrer la caméra', innerError);
+      if (elements.photoPlaceholder) {
+        elements.photoPlaceholder.innerHTML = `
+          <i class="fas fa-camera-slash text-4xl mb-2"></i>
+          <p>Impossible d\'accéder à la caméra.</p>
+        `;
+        showElement(elements.photoPlaceholder);
+      }
+    }
+  }
+}
+
+function setCameraFacingMode(mode, { persist = true, restart = true } = {}) {
+  const normalized = mode === 'user' ? 'user' : 'environment';
+  state.cameraFacingMode = normalized;
+  updateCameraFacingSelect();
+  if (persist) {
+    persistSessionState();
+  }
+  if (restart) {
+    startCameraStream();
+  }
+}
+
 function openPhotoModal() {
   state.photoDataUrl = null;
   showElement(elements.photoModal);
@@ -1617,39 +3442,622 @@ function openPhotoModal() {
   hideElement(elements.confirmPhotoBtn);
   showElement(elements.captureBtn);
   showElement(elements.photoPlaceholder);
-
-  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    navigator.mediaDevices
-      .getUserMedia({ video: true })
-      .then((stream) => {
-        elements.camera.srcObject = stream;
-        elements.camera.play();
-        hideElement(elements.photoPlaceholder);
-        showElement(elements.camera);
-      })
-      .catch((error) => {
-        console.error('Accès caméra refusé', error);
-        elements.photoPlaceholder.innerHTML = `
-          <i class="fas fa-camera-slash text-4xl mb-2"></i>
-          <p>Impossible d'accéder à l'appareil photo</p>
-        `;
-      });
-  } else {
+  if (elements.photoPlaceholder) {
     elements.photoPlaceholder.innerHTML = `
-      <i class="fas fa-camera-slash text-4xl mb-2"></i>
-      <p>Appareil photo non disponible</p>
+      <i class="fas fa-camera text-4xl mb-2 text-green-600"></i>
+      <p>Initialisation de la caméra…</p>
     `;
   }
+  updateCameraFacingSelect();
+  startCameraStream();
 }
 
 function closePhotoModal() {
-  if (elements.camera.srcObject) {
-    elements.camera.srcObject.getTracks().forEach((track) => track.stop());
-    elements.camera.srcObject = null;
-  }
+  stopCameraStream();
 
   hideElement(elements.photoModal);
   state.photoDataUrl = null;
+}
+
+function openCourseIssueModal(courseId) {
+  if (state.currentUser?.role !== 'driver') {
+    return;
+  }
+
+  const course = state.courseCache.get(courseId);
+  if (!course || course.isArchived || course.status === 'completed' || course.status === 'issue_reported') {
+    return;
+  }
+
+  state.courseIssue.courseId = courseId;
+  state.courseIssue.submitting = false;
+  elements.courseIssueComment.value = '';
+  elements.courseIssueError.classList.add('hidden');
+  showElement(elements.courseIssueModal);
+}
+
+function closeCourseIssueModal() {
+  state.courseIssue.courseId = null;
+  state.courseIssue.submitting = false;
+  elements.courseIssueComment.value = '';
+  elements.courseIssueError.classList.add('hidden');
+  hideElement(elements.courseIssueModal);
+}
+
+async function handleCourseIssueSubmit(event) {
+  event.preventDefault();
+
+  if (!state.courseIssue.courseId) {
+    return;
+  }
+
+  const comment = elements.courseIssueComment.value.trim();
+  if (!comment) {
+    elements.courseIssueError.textContent = 'Veuillez renseigner un commentaire.';
+    elements.courseIssueError.classList.remove('hidden');
+    return;
+  }
+
+  try {
+    state.courseIssue.submitting = true;
+    elements.courseIssueError.classList.add('hidden');
+    const submitBtn = elements.courseIssueForm.querySelector('button[type="submit"]');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.classList.add('opacity-75');
+    }
+
+    await apiFetch(`/courses/${state.courseIssue.courseId}/report-issue`, {
+      method: 'POST',
+      body: JSON.stringify({
+        driverId: state.currentUser?.id,
+        comment,
+      }),
+    });
+
+    closeCourseIssueModal();
+    await loadDriverCourses();
+  } catch (error) {
+    console.error('Erreur lors du signalement du problème', error);
+    elements.courseIssueError.textContent = error.message || 'Impossible de signaler le problème.';
+    elements.courseIssueError.classList.remove('hidden');
+  } finally {
+    state.courseIssue.submitting = false;
+    const submitBtn = elements.courseIssueForm.querySelector('button[type="submit"]');
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.classList.remove('opacity-75');
+    }
+  }
+}
+
+function resetMessagingState({ preserveAvailability = false } = {}) {
+  state.messaging.unreadCount = 0;
+  state.messaging.isOpen = false;
+  state.messaging.loading = false;
+  state.messaging.messages = [];
+  state.messaging.threads = [];
+  state.messaging.activeDriverId = null;
+  state.messaging.sending = false;
+
+  if (elements.messagingInput) {
+    elements.messagingInput.value = '';
+  }
+  if (elements.messagingError) {
+    elements.messagingError.textContent = '';
+    elements.messagingError.classList.add('hidden');
+  }
+  if (elements.messagingMessages) {
+    elements.messagingMessages.innerHTML = '';
+  }
+  if (elements.messagingThreadList) {
+    elements.messagingThreadList.innerHTML = '';
+  }
+  if (elements.messagingUnread) {
+    elements.messagingUnread.classList.add('hidden');
+    elements.messagingUnread.textContent = '0';
+  }
+
+  hideElement(elements.messagingPanel);
+  if (!preserveAvailability) {
+    hideElement(elements.messagingFab);
+  }
+}
+
+function updateMessagingSubtitle() {
+  if (!elements.messagingSubtitle) {
+    return;
+  }
+
+  if (!state.currentUser) {
+    elements.messagingSubtitle.textContent = '';
+    return;
+  }
+
+  if (state.currentUser.role === 'driver') {
+    elements.messagingSubtitle.textContent = "Contactez l'administration en direct.";
+  } else {
+    elements.messagingSubtitle.textContent = 'Répondez instantanément aux messages des chauffeurs.';
+  }
+}
+
+function updateMessagingBadge() {
+  if (!elements.messagingUnread) {
+    return;
+  }
+
+  if (state.messaging.unreadCount > 0) {
+    elements.messagingUnread.textContent = String(state.messaging.unreadCount);
+    elements.messagingUnread.classList.remove('hidden');
+  } else {
+    elements.messagingUnread.textContent = '0';
+    elements.messagingUnread.classList.add('hidden');
+  }
+}
+
+function updateMessagingAvailability() {
+  if (!elements.messagingFab || !elements.messagingPanel) {
+    return;
+  }
+
+  if (!state.currentUser) {
+    resetMessagingState();
+    return;
+  }
+
+  showElement(elements.messagingFab);
+  updateMessagingSubtitle();
+  refreshMessagingUnreadCount();
+}
+
+async function refreshMessagingUnreadCount() {
+  if (!state.currentUser) {
+    return;
+  }
+
+  try {
+    if (state.currentUser.role === 'driver') {
+      const data = await apiFetch(
+        `/messages/unread-count?role=driver&driverId=${encodeURIComponent(state.currentUser.id)}`
+      );
+      state.messaging.unreadCount = data?.total || 0;
+    } else {
+      const data = await apiFetch('/messages/unread-count?role=admin');
+      state.messaging.unreadCount = data?.total || 0;
+      state.messaging.threads = Array.isArray(data?.perDriver) ? data.perDriver : [];
+    }
+  } catch (error) {
+    console.warn('Impossible de récupérer le nombre de messages non lus', error);
+    state.messaging.unreadCount = 0;
+  }
+
+  updateMessagingBadge();
+}
+
+function renderMessagingThreads() {
+  if (!elements.messagingThreadList) {
+    return;
+  }
+
+  elements.messagingThreadList.innerHTML = '';
+
+  if (!state.messaging.threads.length) {
+    const empty = document.createElement('p');
+    empty.className = 'text-xs text-slate-500';
+    empty.textContent = 'Aucune conversation pour le moment';
+    elements.messagingThreadList.appendChild(empty);
+    return;
+  }
+
+  state.messaging.threads
+    .slice()
+    .sort((a, b) => new Date(b.lastMessageAt || 0) - new Date(a.lastMessageAt || 0))
+    .forEach((thread) => {
+      const item = document.createElement('div');
+      item.className = `messaging-thread${
+        thread.driverId === state.messaging.activeDriverId ? ' messaging-thread--active' : ''
+      }`;
+      item.setAttribute('data-driver-id', thread.driverId);
+
+      const name = document.createElement('div');
+      name.className = 'messaging-thread__name';
+      name.textContent = thread.driverName || `Chauffeur #${thread.driverId}`;
+      item.appendChild(name);
+
+      const meta = document.createElement('div');
+      meta.className = 'messaging-thread__meta';
+
+      const when = document.createElement('span');
+      when.textContent = thread.lastMessageAt
+        ? new Date(thread.lastMessageAt).toLocaleString('fr-FR', {
+            hour: '2-digit',
+            minute: '2-digit',
+            day: '2-digit',
+            month: 'short',
+          })
+        : '';
+      meta.appendChild(when);
+
+      if (thread.count || thread.unreadFromDriver) {
+        const badge = document.createElement('span');
+        badge.className = 'messaging-thread__badge';
+        badge.textContent = String(thread.count || thread.unreadFromDriver || 0);
+        meta.appendChild(badge);
+      }
+
+      item.appendChild(meta);
+      elements.messagingThreadList.appendChild(item);
+    });
+}
+
+function renderMessagingMessages() {
+  if (!elements.messagingMessages) {
+    return;
+  }
+
+  elements.messagingMessages.innerHTML = '';
+
+  if (!state.messaging.messages.length) {
+    const empty = document.createElement('p');
+    empty.className = 'text-sm text-slate-500 text-center';
+    empty.textContent = 'Envoyez un premier message pour démarrer la conversation.';
+    elements.messagingMessages.appendChild(empty);
+    return;
+  }
+
+  state.messaging.messages.forEach((message) => {
+    const container = document.createElement('div');
+    const isMine =
+      (state.currentUser?.role === 'driver' && message.senderType === 'driver') ||
+      (state.currentUser?.role === 'admin' && message.senderType === 'admin' &&
+        (!message.senderId || message.senderId === state.currentUser.id));
+    container.className = `messaging-message${isMine ? ' messaging-message--mine' : ''}`;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'messaging-message__avatar';
+    avatar.textContent = (message.senderInitials || '').slice(0, 3) || '??';
+    container.appendChild(avatar);
+
+    const bubble = document.createElement('div');
+    bubble.className = 'messaging-message__bubble';
+
+    const label = document.createElement('strong');
+    label.textContent = message.senderLabel || (message.senderType === 'driver' ? 'Chauffeur' : 'Admin');
+    bubble.appendChild(label);
+
+    const body = document.createElement('p');
+    body.textContent = message.body;
+    bubble.appendChild(body);
+
+    const meta = document.createElement('div');
+    meta.className = 'messaging-message__meta';
+    meta.textContent = new Date(message.createdAt).toLocaleString('fr-FR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      day: '2-digit',
+      month: 'short',
+    });
+    bubble.appendChild(meta);
+
+    container.appendChild(bubble);
+    elements.messagingMessages.appendChild(container);
+  });
+
+  elements.messagingMessages.scrollTop = elements.messagingMessages.scrollHeight;
+}
+
+async function markConversationAsRead(driverId, readerType) {
+  try {
+    await apiFetch(`/messages/${driverId}/read`, {
+      method: 'POST',
+      body: JSON.stringify({ readerType }),
+    });
+  } catch (error) {
+    console.warn('Impossible de marquer la conversation comme lue', error);
+  }
+}
+
+async function loadMessagingConversation(driverId, { markRead = true } = {}) {
+  if (!driverId) {
+    return;
+  }
+
+  state.messaging.loading = true;
+  renderMessagingMessages();
+
+  try {
+    const role = state.currentUser?.role === 'admin' ? 'admin' : 'driver';
+    const query = role === 'admin' ? 'role=admin' : `role=driver&driverId=${encodeURIComponent(driverId)}`;
+    const data = await apiFetch(`/messages/threads/${driverId}?${query}`);
+    const messages = Array.isArray(data?.messages) ? data.messages : [];
+    state.messaging.messages = messages;
+    renderMessagingMessages();
+
+    if (markRead) {
+      await markConversationAsRead(driverId, role);
+      await refreshMessagingUnreadCount();
+    }
+  } catch (error) {
+    console.error('Erreur lors du chargement de la conversation', error);
+    elements.messagingError.textContent = error.message || 'Impossible de charger les messages.';
+    elements.messagingError.classList.remove('hidden');
+  } finally {
+    state.messaging.loading = false;
+  }
+}
+
+async function loadMessagingInbox() {
+  try {
+    const inbox = await apiFetch('/messages/inbox');
+    state.messaging.threads = Array.isArray(inbox)
+      ? inbox.map((thread) => ({
+          driverId: thread.driverId,
+          driverName: thread.driverName,
+          lastMessageAt: thread.lastMessageAt,
+          count: thread.unreadFromDriver || thread.count || 0,
+        }))
+      : [];
+    renderMessagingThreads();
+  } catch (error) {
+    console.warn('Impossible de charger la liste des conversations', error);
+    state.messaging.threads = [];
+    renderMessagingThreads();
+  }
+}
+
+function populateMessagingDriverPicker() {
+  if (!elements.messagingDriverPicker) {
+    return;
+  }
+
+  if (state.currentUser?.role !== 'admin') {
+    elements.messagingDriverPicker.classList.add('hidden');
+    return;
+  }
+
+  elements.messagingDriverPicker.classList.remove('hidden');
+  elements.messagingDriverPicker.innerHTML = '<option value="">Choisir un chauffeur...</option>';
+
+  (state.adminDrivers || []).forEach((driver) => {
+    const option = document.createElement('option');
+    option.value = driver.id;
+    option.textContent = `${driver.firstName} ${driver.lastName}`;
+    if (driver.id === state.messaging.activeDriverId) {
+      option.selected = true;
+    }
+    elements.messagingDriverPicker.appendChild(option);
+  });
+}
+
+async function ensureAdminDriversForMessaging() {
+  if (state.currentUser?.role !== 'admin') {
+    return;
+  }
+
+  if (!state.adminDrivers.length) {
+    await loadAdminDrivers({ force: true });
+  }
+  populateMessagingDriverPicker();
+}
+
+async function openMessagingPanel() {
+  if (!state.currentUser) {
+    return;
+  }
+
+  state.messaging.isOpen = true;
+  elements.messagingError.classList.add('hidden');
+  elements.messagingMessages.innerHTML = '';
+  showElement(elements.messagingPanel);
+
+  if (state.currentUser.role === 'driver') {
+    elements.messagingThreadList?.classList.add('hidden');
+    elements.messagingDriverPicker?.classList.add('hidden');
+    state.messaging.activeDriverId = state.currentUser.id;
+    await loadMessagingConversation(state.messaging.activeDriverId);
+  } else {
+    elements.messagingThreadList?.classList.remove('hidden');
+    await ensureAdminDriversForMessaging();
+    await loadMessagingInbox();
+
+    if (!state.messaging.activeDriverId) {
+      if (state.messaging.threads.length) {
+        state.messaging.activeDriverId = state.messaging.threads[0].driverId;
+      } else if (state.adminDrivers.length) {
+        state.messaging.activeDriverId = state.adminDrivers[0].id;
+      }
+    }
+
+    populateMessagingDriverPicker();
+
+    if (state.messaging.activeDriverId) {
+      await loadMessagingConversation(state.messaging.activeDriverId);
+      if (elements.messagingDriverPicker) {
+        elements.messagingDriverPicker.value = String(state.messaging.activeDriverId);
+      }
+    } else {
+      renderMessagingMessages();
+    }
+  }
+
+  state.messaging.unreadCount = 0;
+  updateMessagingBadge();
+}
+
+function closeMessagingPanel() {
+  state.messaging.isOpen = false;
+  hideElement(elements.messagingPanel);
+}
+
+function toggleMessagingPanel() {
+  if (state.messaging.isOpen) {
+    closeMessagingPanel();
+  } else {
+    openMessagingPanel();
+  }
+}
+
+function selectMessagingThread(driverId) {
+  if (!driverId || state.messaging.activeDriverId === driverId) {
+    return;
+  }
+  state.messaging.activeDriverId = driverId;
+  renderMessagingThreads();
+  loadMessagingConversation(driverId);
+  if (elements.messagingDriverPicker) {
+    elements.messagingDriverPicker.value = String(driverId);
+  }
+}
+
+async function handleMessagingSubmit(event) {
+  event.preventDefault();
+
+  if (!state.currentUser) {
+    return;
+  }
+
+  const body = elements.messagingInput.value.trim();
+  if (!body) {
+    elements.messagingError.textContent = 'Le message ne peut pas être vide.';
+    elements.messagingError.classList.remove('hidden');
+    return;
+  }
+
+  if (!state.messaging.activeDriverId) {
+    elements.messagingError.textContent = "Sélectionnez un chauffeur avant d'envoyer un message.";
+    elements.messagingError.classList.remove('hidden');
+    return;
+  }
+
+  try {
+    elements.messagingError.classList.add('hidden');
+    state.messaging.sending = true;
+    const payload = {
+      driverId: state.messaging.activeDriverId,
+      body,
+      senderType: state.currentUser.role === 'admin' ? 'admin' : 'driver',
+    };
+    const message = await apiFetch('/messages', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+
+    elements.messagingInput.value = '';
+    if (Array.isArray(state.messaging.messages)) {
+      state.messaging.messages.push(message);
+    } else {
+      state.messaging.messages = [message];
+    }
+    renderMessagingMessages();
+    await refreshMessagingUnreadCount();
+  } catch (error) {
+    console.error("Erreur lors de l'envoi du message", error);
+    elements.messagingError.textContent = error.message || "Impossible d'envoyer le message.";
+    elements.messagingError.classList.remove('hidden');
+  } finally {
+    state.messaging.sending = false;
+  }
+}
+
+function handleMessagingDriverChange(event) {
+  const value = Number.parseInt(event.target.value, 10);
+  if (Number.isInteger(value)) {
+    selectMessagingThread(value);
+  }
+}
+
+function handleMessagingThreadClick(event) {
+  const target = event.target.closest('[data-driver-id]');
+  if (!target) {
+    return;
+  }
+  const driverId = Number.parseInt(target.getAttribute('data-driver-id'), 10);
+  if (Number.isInteger(driverId)) {
+    selectMessagingThread(driverId);
+  }
+}
+
+function processRealtimeMessage(payload) {
+  if (!payload || !payload.message || !payload.driverId || !state.currentUser) {
+    return;
+  }
+
+  const driverId = Number(payload.driverId);
+  const message = payload.message;
+  const senderType = payload.senderType;
+
+  const isDriver = state.currentUser.role === 'driver' && driverId === state.currentUser.id;
+  const isAdmin = state.currentUser.role === 'admin';
+
+  if (!isDriver && !isAdmin) {
+    return;
+  }
+
+  if (isDriver && senderType === 'driver') {
+    return;
+  }
+
+  if (isAdmin && senderType === 'admin' && message.senderId && message.senderId === state.currentUser.id) {
+    return;
+  }
+
+  const isCurrentConversation = state.messaging.isOpen && state.messaging.activeDriverId === driverId;
+  const alreadyPresent = state.messaging.messages.some((existing) => existing.id === message.id);
+
+  if (isCurrentConversation && !alreadyPresent) {
+    state.messaging.messages.push(message);
+    renderMessagingMessages();
+
+    if (isDriver && senderType === 'admin') {
+      markConversationAsRead(driverId, 'driver');
+      refreshMessagingUnreadCount();
+    }
+
+    if (isAdmin && senderType === 'driver') {
+      markConversationAsRead(driverId, 'admin');
+      refreshMessagingUnreadCount();
+    }
+  } else if (!alreadyPresent) {
+    refreshMessagingUnreadCount();
+  }
+
+  if (isAdmin) {
+    const existing = state.messaging.threads.find((thread) => thread.driverId === driverId);
+    if (existing) {
+      existing.lastMessageAt = message.createdAt;
+      if (senderType === 'driver') {
+        existing.count = (existing.count || 0) + 1;
+      }
+    } else {
+      state.messaging.threads.push({
+        driverId,
+        driverName: message.senderLabel || `Chauffeur #${driverId}`,
+        lastMessageAt: message.createdAt,
+        count: senderType === 'driver' ? 1 : 0,
+      });
+    }
+    renderMessagingThreads();
+  }
+}
+
+function processMessageReadEvent(payload) {
+  if (!payload || !state.currentUser) {
+    return;
+  }
+
+  if (state.currentUser.role === 'driver') {
+    if (Number(payload.driverId) === state.currentUser.id && payload.readerType === 'driver') {
+      refreshMessagingUnreadCount();
+    }
+  } else if (state.currentUser.role === 'admin' && payload.readerType === 'admin') {
+    refreshMessagingUnreadCount();
+    if (state.messaging.threads.length) {
+      state.messaging.threads = state.messaging.threads.map((thread) =>
+        thread.driverId === Number(payload.driverId) ? { ...thread, count: 0 } : thread
+      );
+      renderMessagingThreads();
+    }
+  }
 }
 
 function capturePhoto() {
@@ -1666,15 +4074,23 @@ function capturePhoto() {
   showElement(elements.photoPreview);
   showElement(elements.retakePhotoBtn);
   showElement(elements.confirmPhotoBtn);
+  stopCameraStream();
 }
 
 function retakePhoto() {
   state.photoDataUrl = null;
-  showElement(elements.camera);
   hideElement(elements.photoPreview);
   hideElement(elements.retakePhotoBtn);
   hideElement(elements.confirmPhotoBtn);
   showElement(elements.captureBtn);
+  showElement(elements.photoPlaceholder);
+  if (elements.photoPlaceholder) {
+    elements.photoPlaceholder.innerHTML = `
+      <i class="fas fa-camera text-4xl mb-2 text-green-600"></i>
+      <p>Initialisation de la caméra…</p>
+    `;
+  }
+  startCameraStream();
 }
 
 async function confirmPhoto() {
@@ -1707,6 +4123,247 @@ async function confirmPhoto() {
   }
 }
 
+function clearPersistedSession() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  try {
+    window.localStorage.removeItem('agriHolannSession');
+  } catch (error) {
+    console.warn('Impossible de supprimer la session enregistrée', error);
+  }
+}
+
+function persistSessionState() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+
+  if (!state.currentUser) {
+    clearPersistedSession();
+    return;
+  }
+
+  const session = {
+    role: state.currentUser.role,
+    activeDriverTab: state.activeDriverTab || 'today',
+    cameraFacingMode: state.cameraFacingMode,
+    displayPreferences: { ...state.displayPreferences },
+  };
+
+  if (state.currentUser.role === 'driver') {
+    session.user = {
+      id: state.currentUser.id,
+      firstName: state.currentUser.firstName,
+      lastName: state.currentUser.lastName,
+      hasPassword: state.currentUser.hasPassword || false,
+    };
+  } else if (state.currentUser.role === 'admin') {
+    session.user = {
+      id: state.currentUser.id,
+      firstName: state.currentUser.firstName,
+      lastName: state.currentUser.lastName,
+      identifier: state.currentUser.identifier,
+      initials: state.currentUser.initials,
+      adminLevel: state.currentUser.adminLevel,
+    };
+    session.token = state.currentUser.token || null;
+    session.adminView = state.adminView;
+    session.settingsTab = state.settings?.activeTab || 'email';
+    session.adminManagementView = state.adminManagementView || 'list';
+    session.adminFilters = { ...state.adminFilters };
+    session.archiveFilters = { ...state.archiveFilters };
+  }
+
+  try {
+    window.localStorage.setItem('agriHolannSession', JSON.stringify(session));
+  } catch (error) {
+    console.warn('Impossible de sauvegarder la session', error);
+  }
+}
+
+function handleRealtimeEvent(event) {
+  if (!event || !event.type) {
+    return;
+  }
+
+  const payload = event.payload || {};
+
+  switch (event.type) {
+    case 'drivers:updated':
+      if (state.isAdmin) {
+        loadAdminDrivers({ force: true });
+        loadDriverCredentials();
+      }
+      if (state.currentUser?.role === 'driver') {
+        if (!payload.driverId || payload.driverId === state.currentUser.id) {
+          loadDriverCourses();
+        }
+      }
+      break;
+    case 'driver-passwords:updated':
+      if (state.isAdmin) {
+        loadDriverCredentials();
+      }
+      if (state.currentUser?.role === 'driver') {
+        if (!payload.driverId || payload.driverId === state.currentUser.id) {
+          loadDriverCourses();
+        }
+      }
+      break;
+    case 'courses:changed':
+      if (state.currentUser?.role === 'driver') {
+        if (!payload.driverId || payload.driverId === state.currentUser.id) {
+          loadDriverCourses();
+        }
+      }
+      if (state.isAdmin) {
+        loadAdminCourses();
+        loadArchivedCourses();
+        loadActivityLog();
+      }
+      break;
+    case 'activity:changed':
+      if (state.isAdmin) {
+        loadActivityLog();
+      }
+      break;
+    case 'admins:updated':
+      if (state.isAdmin && state.currentUser?.adminLevel === 'superadmin') {
+        loadAdmins();
+      }
+      break;
+    case 'settings:email-updated':
+      if (state.isAdmin) {
+        loadEmailRecipient();
+      }
+      break;
+    case 'messages:new':
+      processRealtimeMessage(payload);
+      break;
+    case 'messages:read':
+      processMessageReadEvent(payload);
+      break;
+    default:
+      break;
+  }
+}
+
+function setupRealtimeUpdates() {
+  if (typeof window === 'undefined' || !window.EventSource) {
+    console.warn("Les mises à jour en direct ne sont pas supportées par ce navigateur.");
+    return;
+  }
+
+  if (eventSource) {
+    eventSource.close();
+  }
+
+  eventSource = new EventSource(`${API_BASE}/events`);
+
+  eventSource.onmessage = (message) => {
+    if (!message?.data) {
+      return;
+    }
+    try {
+      const event = JSON.parse(message.data);
+      handleRealtimeEvent(event);
+    } catch (error) {
+      console.warn('Impossible de décoder un événement en temps réel', error);
+    }
+  };
+
+  eventSource.onerror = (error) => {
+    console.warn('Connexion temps réel interrompue, nouvelle tentative automatique...', error);
+  };
+}
+
+async function restoreSessionFromStorage() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    showElement(elements.loginPage);
+    return;
+  }
+
+  const raw = window.localStorage.getItem('agriHolannSession');
+  if (!raw) {
+    showElement(elements.loginPage);
+    return;
+  }
+
+  let saved;
+  try {
+    saved = JSON.parse(raw);
+  } catch (error) {
+    console.warn('Session locale invalide, purge.', error);
+    clearPersistedSession();
+    showElement(elements.loginPage);
+    return;
+  }
+
+  if (saved.displayPreferences) {
+    state.displayPreferences = {
+      ...state.displayPreferences,
+      ...saved.displayPreferences,
+    };
+  }
+
+  if (saved.cameraFacingMode) {
+    state.cameraFacingMode = saved.cameraFacingMode;
+  }
+
+  if (saved.role === 'admin' && saved.token) {
+    try {
+      const response = await fetch(`${API_BASE}/admins/session`, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Token': saved.token,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Session administrateur invalide');
+      }
+
+      const admin = await response.json();
+      setAdminSession(admin, {
+        view: saved.adminView || 'planning',
+        driverTab: saved.activeDriverTab || 'week',
+        settingsTab: saved.settingsTab || 'email',
+        adminManagementView: saved.adminManagementView || 'list',
+        adminFilters: saved.adminFilters || {},
+        archiveFilters: saved.archiveFilters || {},
+        displayPreferences: saved.displayPreferences || {},
+      });
+      return;
+    } catch (error) {
+      console.warn('Impossible de restaurer la session administrateur', error);
+      clearPersistedSession();
+      showElement(elements.loginPage);
+      return;
+    }
+  }
+
+  if (saved.role === 'driver' && saved.user?.id) {
+    try {
+      const driver = await apiFetch(`/drivers/${saved.user.id}`);
+      await loginAsDriver(driver, {
+        skipPasswordCheck: true,
+        initialTab: saved.activeDriverTab || 'today',
+        displayPreferences: saved.displayPreferences || {},
+      });
+      return;
+    } catch (error) {
+      console.warn('Impossible de restaurer la session chauffeur', error);
+      clearPersistedSession();
+      showElement(elements.loginPage);
+      return;
+    }
+  }
+
+  clearPersistedSession();
+  showElement(elements.loginPage);
+}
+
 function registerEventListeners() {
   elements.lastnameInput.addEventListener('input', searchDrivers);
   elements.adminLoginBtn.addEventListener('click', openAdminLoginModal);
@@ -1736,11 +4393,25 @@ function registerEventListeners() {
   elements.captureBtn.addEventListener('click', capturePhoto);
   elements.confirmPhotoBtn.addEventListener('click', confirmPhoto);
   elements.retakePhotoBtn.addEventListener('click', retakePhoto);
+  elements.switchCameraBtn?.addEventListener('click', () => {
+    const nextMode = state.cameraFacingMode === 'environment' ? 'user' : 'environment';
+    setCameraFacingMode(nextMode);
+  });
+  elements.cameraFacingSelect?.addEventListener('change', (event) => {
+    setCameraFacingMode(event.target.value || 'environment');
+  });
+  elements.courseIssueForm?.addEventListener('submit', handleCourseIssueSubmit);
+  elements.courseIssueCancel?.addEventListener('click', closeCourseIssueModal);
+  elements.courseIssueClose?.addEventListener('click', closeCourseIssueModal);
+  elements.messagingToggle?.addEventListener('click', toggleMessagingPanel);
+  elements.messagingClose?.addEventListener('click', closeMessagingPanel);
+  elements.messagingForm?.addEventListener('submit', handleMessagingSubmit);
+  elements.messagingDriverPicker?.addEventListener('change', handleMessagingDriverChange);
+  elements.messagingThreadList?.addEventListener('click', handleMessagingThreadClick);
   elements.adminDriverSelect.addEventListener('change', () => {
     state.adminFilters.driverId = elements.adminDriverSelect.value || 'all';
-    if (state.isAdmin) {
-      loadAdminCourses();
-    }
+    loadAdminCourses();
+    persistSessionState();
   });
   elements.newCourseAdminBtn.addEventListener('click', () => {
     openCourseEditor();
@@ -1751,30 +4422,94 @@ function registerEventListeners() {
 
   if (elements.adminRangeButtons) {
     elements.adminRangeButtons.forEach((button) => {
-      button.addEventListener('click', () => {
-        const range = button.getAttribute('data-admin-range');
-        state.adminFilters.range = range || 'week';
-        updateAdminRangeButtons();
-        loadAdminCourses();
-      });
+      button.addEventListener('click', handleAdminRangeClick);
     });
   }
 
+  elements.adminStatusFilter?.addEventListener('change', handleAdminStatusChange);
+  elements.adminMerchandiseFilter?.addEventListener('change', handleAdminMerchandiseChange);
+  elements.adminIssueFilter?.addEventListener('change', handleAdminIssueChange);
+  elements.adminPhotoFilter?.addEventListener('change', handleAdminPhotoChange);
+  elements.adminFromInput?.addEventListener('change', handleAdminDateChange);
+  elements.adminToInput?.addEventListener('change', handleAdminDateChange);
+  elements.adminSearchFilter?.addEventListener('input', handleAdminSearchInput);
+  elements.adminResetFiltersBtn?.addEventListener('click', (event) => {
+    event.preventDefault();
+    resetAdminFilters();
+  });
+  elements.adminExportPdfBtn?.addEventListener('click', (event) => {
+    event.preventDefault();
+    exportCourses('pdf', state.adminView === 'archives' ? 'archives' : 'planning');
+  });
+  elements.adminExportExcelBtn?.addEventListener('click', (event) => {
+    event.preventDefault();
+    exportCourses('xlsx', state.adminView === 'archives' ? 'archives' : 'planning');
+  });
+  elements.archiveExportPdfBtn?.addEventListener('click', (event) => {
+    event.preventDefault();
+    exportCourses('pdf', 'archives');
+  });
+  elements.archiveExportExcelBtn?.addEventListener('click', (event) => {
+    event.preventDefault();
+    exportCourses('xlsx', 'archives');
+  });
+
+  elements.driverLayoutButtons?.forEach((button) => {
+    button.addEventListener('click', handleDriverLayoutChange);
+  });
+  elements.driverDensityButtons?.forEach((button) => {
+    button.addEventListener('click', handleDriverDensityChange);
+  });
+  elements.adminLayoutButtons?.forEach((button) => {
+    button.addEventListener('click', handleAdminLayoutChange);
+  });
+  elements.adminDensityButtons?.forEach((button) => {
+    button.addEventListener('click', handleAdminDensityChange);
+  });
+
   elements.adminPlanningTab?.addEventListener('click', () => switchAdminView('planning'));
   elements.adminArchivesTab?.addEventListener('click', () => switchAdminView('archives'));
+  elements.adminSettingsTab?.addEventListener('click', () => switchAdminView('settings'));
 
   elements.closeAdminLoginModalBtn?.addEventListener('click', closeAdminLoginModal);
   elements.adminLoginForm?.addEventListener('submit', handleAdminLogin);
-  elements.adminCreateForm?.addEventListener('submit', handleAdminCreate);
   elements.driverManagementForm?.addEventListener('submit', handleAddDriver);
-  elements.adminCreateFirstName?.addEventListener('input', updateAdminIdentifierPreview);
-  elements.adminCreateLastName?.addEventListener('input', updateAdminIdentifierPreview);
+  elements.driverManagementToggle?.addEventListener('click', () => {
+    state.driverManagement.expanded = !state.driverManagement.expanded;
+    renderDriverManagementPanel();
+    if (state.driverManagement.expanded && !state.adminDrivers.length && !state.driverManagement.loading) {
+      loadAdminDrivers({ force: true });
+    }
+  });
 
   elements.archivePeriodFilter?.addEventListener('change', handleArchivePeriodChange);
   elements.archiveDriverFilter?.addEventListener('change', handleArchiveFiltersChange);
   elements.archiveMerchandiseFilter?.addEventListener('change', handleArchiveFiltersChange);
   elements.archiveFromInput?.addEventListener('change', handleArchiveDatesChange);
   elements.archiveToInput?.addEventListener('change', handleArchiveDatesChange);
+  elements.emailSettingsForm?.addEventListener('submit', handleEmailSettingsSubmit);
+  elements.driverPasswordForm?.addEventListener('submit', handleDriverPasswordSubmit);
+  elements.driverPasswordCancel?.addEventListener('click', () => {
+    closeDriverPasswordModal();
+  });
+  if (elements.settingsTabButtons) {
+    elements.settingsTabButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const tabKey = button.getAttribute('data-settings-tab');
+        setSettingsTab(tabKey || 'email');
+      });
+    });
+  }
+  if (elements.adminManagementTabButtons && elements.adminManagementTabButtons.length) {
+    elements.adminManagementTabButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const tabKey = button.getAttribute('data-admin-management-tab') || 'list';
+        setAdminManagementView(tabKey);
+      });
+    });
+  }
+  elements.adminManagementCreateForm?.addEventListener('submit', handleAdminCreation);
+  elements.adminPasswordForm?.addEventListener('submit', handleAdminPasswordChange);
 
   window.addEventListener('click', (event) => {
     if (event.target === elements.courseModal) {
@@ -1789,6 +4524,15 @@ function registerEventListeners() {
     if (event.target === elements.adminLoginModal) {
       closeAdminLoginModal();
     }
+    if (event.target === elements.driverPasswordModal) {
+      closeDriverPasswordModal();
+    }
+    if (event.target === elements.courseIssueModal) {
+      closeCourseIssueModal();
+    }
+    if (event.target === elements.messagingPanel) {
+      closeMessagingPanel();
+    }
   });
 }
 
@@ -1796,7 +4540,19 @@ function init() {
   setDefaultCourseDateTime();
   updateAdminRangeButtons();
   updateArchivePeriodInputs();
+  renderDriverManagementPanel();
+  renderSettingsTabs();
+  applyDisplayPreferences();
   registerEventListeners();
+  setupRealtimeUpdates();
+  resetMessagingState();
+  restoreSessionFromStorage();
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+window.addEventListener('beforeunload', () => {
+  if (eventSource) {
+    eventSource.close();
+  }
+});
