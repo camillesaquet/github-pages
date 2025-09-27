@@ -88,6 +88,14 @@ const state = {
     adminLayout: 'table',
     adminDensity: 'comfortable',
   },
+  driverPreferences: {
+    open: false,
+    activeTab: 'today',
+  },
+  notifications: {
+    promptShown: false,
+    lastKnownPermission: typeof Notification !== 'undefined' ? Notification.permission : 'default',
+  },
 };
 
 let adminSearchTimer = null;
@@ -253,8 +261,17 @@ const elements = {
   adminDensityButtons: document.querySelectorAll('[data-admin-density]'),
   archiveExportPdfBtn: document.getElementById('archive-export-pdf'),
   archiveExportExcelBtn: document.getElementById('archive-export-excel'),
+  driverPreferencesToggle: document.getElementById('driver-preferences-toggle'),
+  driverPreferencesPanel: document.getElementById('driver-preferences-panel'),
+  driverPreferencesClose: document.getElementById('driver-preferences-close'),
+  driverPreferencesTabs: document.querySelectorAll('[data-driver-preferences-tab]'),
+  driverPreferencesSections: document.querySelectorAll('[data-driver-preferences-panel]'),
+  notificationPrompt: document.getElementById('notification-permission'),
+  notificationAllow: document.getElementById('notification-allow'),
+  notificationDismiss: document.getElementById('notification-dismiss'),
 };
 
+const NOTIFICATION_SETTINGS_KEY = 'agriHolannNotificationSettings';
 let eventSource = null;
 
 function showElement(element) {
@@ -617,7 +634,12 @@ function renderDriverList(drivers) {
 }
 
 async function loginAsDriver(driver, options = {}) {
-  const { skipPasswordCheck = false, initialTab = 'today', displayPreferences = null } = options;
+  const {
+    skipPasswordCheck = false,
+    initialTab = 'today',
+    displayPreferences = null,
+    preferencesTab = 'today',
+  } = options;
   const normalizedDriver = normalizeDriver(driver);
 
   if (!skipPasswordCheck && normalizedDriver.hasPassword) {
@@ -640,6 +662,9 @@ async function loginAsDriver(driver, options = {}) {
   hideElement(elements.adminDashboard);
   closeDriverPasswordModal();
   state.activeDriverTab = initialTab;
+  state.driverPreferences.open = false;
+  setDriverPreferencesTab(preferencesTab);
+  syncDriverPreferencesPanel();
   if (displayPreferences) {
     state.displayPreferences = {
       ...state.displayPreferences,
@@ -651,6 +676,7 @@ async function loginAsDriver(driver, options = {}) {
   await loadDriverCourses();
   updateMessagingAvailability();
   persistSessionState();
+  maybePromptNotificationPermission();
 }
 
 function openDriverPasswordModal(driver) {
@@ -756,6 +782,7 @@ function setAdminSession(admin, options = {}) {
   const view = options.view || options.adminView || 'planning';
   const driverTab = options.driverTab || options.activeDriverTab || 'week';
   const settingsTab = options.settingsTab || 'email';
+  const preferencesTab = options.driverPreferencesTab || 'today';
   const displayPreferences = {
     ...state.displayPreferences,
     ...(options.displayPreferences || {}),
@@ -785,6 +812,9 @@ function setAdminSession(admin, options = {}) {
   state.adminDrivers = [];
   state.driverSearchResults = [];
   state.activeDriverTab = driverTab;
+  state.driverPreferences.open = false;
+  setDriverPreferencesTab(preferencesTab);
+  syncDriverPreferencesPanel();
 
   hideElement(elements.loginPage);
   hideElement(elements.driverDashboard);
@@ -839,6 +869,7 @@ function setAdminSession(admin, options = {}) {
     loadAdmins();
   }
   updateMessagingAvailability();
+  maybePromptNotificationPermission();
   persistSessionState();
 }
 
@@ -1316,6 +1347,11 @@ async function logout(event) {
   state.driverManagement.error = null;
   state.activityLog = [];
   state.courseCache.clear();
+  state.driverPreferences = { open: false, activeTab: 'today' };
+  setDriverPreferencesTab('today');
+  syncDriverPreferencesPanel();
+  state.notifications.promptShown = false;
+  closeNotificationPrompt();
   resetAdminEditState();
   resetMessagingState();
   updateDriverCreationAvailability();
@@ -2010,6 +2046,268 @@ function handleDriverWeekLayoutChange(event) {
   applyDisplayPreferences();
   renderWeekCourses();
   persistSessionState();
+}
+
+function syncDriverPreferencesPanel() {
+  if (!elements.driverPreferencesPanel) {
+    return;
+  }
+  if (elements.driverPreferencesToggle) {
+    elements.driverPreferencesToggle.setAttribute('aria-expanded', state.driverPreferences.open ? 'true' : 'false');
+  }
+  if (state.driverPreferences.open) {
+    showElement(elements.driverPreferencesPanel);
+    elements.driverPreferencesPanel.setAttribute('aria-hidden', 'false');
+  } else {
+    hideElement(elements.driverPreferencesPanel);
+    elements.driverPreferencesPanel.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function setDriverPreferencesTab(tabKey) {
+  const normalized = tabKey === 'week' ? 'week' : 'today';
+  state.driverPreferences.activeTab = normalized;
+
+  if (elements.driverPreferencesTabs) {
+    elements.driverPreferencesTabs.forEach((button) => {
+      const tab = button.getAttribute('data-driver-preferences-tab');
+      const isActive = tab === normalized;
+      button.classList.toggle('driver-preferences__tab--active', isActive);
+      button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+  }
+
+  if (elements.driverPreferencesSections) {
+    elements.driverPreferencesSections.forEach((section) => {
+      const tab = section.getAttribute('data-driver-preferences-panel');
+      const isActive = tab === normalized;
+      section.classList.toggle('hidden', !isActive);
+      section.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+    });
+  }
+}
+
+function openDriverPreferences() {
+  state.driverPreferences.open = true;
+  syncDriverPreferencesPanel();
+}
+
+function closeDriverPreferences() {
+  state.driverPreferences.open = false;
+  syncDriverPreferencesPanel();
+}
+
+function toggleDriverPreferences() {
+  state.driverPreferences.open = !state.driverPreferences.open;
+  syncDriverPreferencesPanel();
+}
+
+function hasNotificationSupport() {
+  return typeof window !== 'undefined' && 'Notification' in window;
+}
+
+function getNotificationSettings() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(NOTIFICATION_SETTINGS_KEY);
+    if (!raw) {
+      return null;
+    }
+    return JSON.parse(raw);
+  } catch (error) {
+    console.warn('Préférences de notification illisibles', error);
+    return null;
+  }
+}
+
+function saveNotificationSettings(settings) {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(NOTIFICATION_SETTINGS_KEY, JSON.stringify(settings));
+  } catch (error) {
+    console.warn("Impossible d'enregistrer les préférences de notification", error);
+  }
+}
+
+function recordNotificationStatus(status) {
+  const payload = {
+    status,
+    updatedAt: Date.now(),
+  };
+  saveNotificationSettings(payload);
+  if (status === 'granted' || status === 'denied' || status === 'default') {
+    state.notifications.lastKnownPermission = status;
+  }
+}
+
+function openNotificationPrompt() {
+  if (!elements.notificationPrompt) {
+    return;
+  }
+  showElement(elements.notificationPrompt);
+  elements.notificationPrompt.setAttribute('aria-hidden', 'false');
+}
+
+function closeNotificationPrompt() {
+  if (!elements.notificationPrompt) {
+    return;
+  }
+  hideElement(elements.notificationPrompt);
+  elements.notificationPrompt.setAttribute('aria-hidden', 'true');
+  state.notifications.promptShown = false;
+}
+
+function handleNotificationDismiss() {
+  recordNotificationStatus('dismissed');
+  closeNotificationPrompt();
+}
+
+async function requestNotificationPermission() {
+  if (!hasNotificationSupport()) {
+    closeNotificationPrompt();
+    return;
+  }
+
+  try {
+    const result = await Notification.requestPermission();
+    recordNotificationStatus(result);
+    closeNotificationPrompt();
+    state.notifications.lastKnownPermission = result;
+    if (result === 'granted') {
+      try {
+        new Notification('Notifications activées', {
+          body: "Vous recevrez les alertes importantes même si l'application est en arrière-plan.",
+        });
+      } catch (error) {
+        console.warn('Notification locale indisponible', error);
+      }
+    }
+  } catch (error) {
+    console.warn('Erreur lors de la demande de permission de notification', error);
+    closeNotificationPrompt();
+  }
+}
+
+function shouldPromptNotification() {
+  if (!hasNotificationSupport()) {
+    return false;
+  }
+  const permission = Notification.permission;
+  state.notifications.lastKnownPermission = permission;
+  if (permission === 'granted' || permission === 'denied') {
+    recordNotificationStatus(permission);
+    return false;
+  }
+  const settings = getNotificationSettings();
+  if (settings?.status && settings.status !== 'granted') {
+    return false;
+  }
+  return true;
+}
+
+function maybePromptNotificationPermission() {
+  if (state.notifications.promptShown) {
+    return;
+  }
+  if (!elements.notificationPrompt) {
+    return;
+  }
+  if (!shouldPromptNotification()) {
+    return;
+  }
+  state.notifications.promptShown = true;
+  recordNotificationStatus('prompted');
+  openNotificationPrompt();
+}
+
+function canShowRealtimeNotification() {
+  return hasNotificationSupport() && Notification.permission === 'granted';
+}
+
+function maybeShowRealtimeNotification(event) {
+  if (!canShowRealtimeNotification()) {
+    return;
+  }
+  if (typeof document !== 'undefined' && !document.hidden) {
+    return;
+  }
+  if (!event || !event.type || !state.currentUser) {
+    return;
+  }
+
+  let title = '';
+  let body = '';
+
+  if (event.type === 'courses:changed' && state.currentUser.role === 'driver') {
+    if (event.payload?.driverId && event.payload.driverId !== state.currentUser.id) {
+      return;
+    }
+    const action = event.payload?.action;
+    if (['created', 'restored', 'reopened'].includes(action)) {
+      title = 'Nouvelle course disponible';
+      body = "Une nouvelle course vient d'être ajoutée à votre planning.";
+    } else if (action === 'updated') {
+      title = 'Course mise à jour';
+      body = 'Consultez les changements apportés à votre prochaine course.';
+    } else if (action === 'deleted') {
+      title = 'Course supprimée';
+      body = 'Une course a été retirée de votre planning.';
+    } else {
+      return;
+    }
+  } else if (event.type === 'messages:new') {
+    const { payload } = event;
+    const { senderType, driverId, message } = payload || {};
+    const text = typeof message?.body === 'string' ? message.body.trim() : '';
+    const preview = text.length > 140 ? `${text.slice(0, 137)}…` : text;
+
+    if (state.currentUser.role === 'driver') {
+      if (Number(driverId) !== state.currentUser.id || senderType !== 'admin') {
+        return;
+      }
+      title = "Nouveau message de l'administration";
+      body = preview || 'Un nouveau message est disponible.';
+    } else if (state.isAdmin && senderType === 'driver') {
+      const driver = state.adminDrivers.find((d) => d.id === Number(driverId));
+      const name = driver ? `${driver.firstName || ''} ${driver.lastName || ''}`.trim() || 'Un chauffeur' : 'Un chauffeur';
+      title = `${name} vous a écrit`;
+      body = preview || "Un message vient d'être reçu.";
+    } else {
+      return;
+    }
+  }
+
+  if (!title) {
+    return;
+  }
+
+  try {
+    new Notification(title, body ? { body } : undefined);
+  } catch (error) {
+    console.warn("Impossible d'afficher la notification en temps réel", error);
+  }
+}
+
+function handleGlobalKeyDown(event) {
+  if (event.key !== 'Escape') {
+    return;
+  }
+  let handled = false;
+  if (state.driverPreferences.open) {
+    closeDriverPreferences();
+    handled = true;
+  }
+  if (elements.notificationPrompt && !elements.notificationPrompt.classList.contains('hidden')) {
+    handleNotificationDismiss();
+    handled = true;
+  }
+  if (handled) {
+    event.preventDefault();
+  }
 }
 
 function handleAdminLayoutChange(event) {
@@ -3052,6 +3350,9 @@ function renderAdminCourses() {
             </div>
           </div>
           <div class="flex flex-wrap gap-3 mt-4 justify-end" data-card-actions>
+            ${course.status === 'completed'
+              ? '<button class="text-emerald-600 hover:text-emerald-800" data-action="reopen" aria-label="Remettre la course en attente"><i class="fas fa-rotate-left"></i></button>'
+              : ''}
             <button class="text-amber-600 hover:text-amber-800" data-action="archive" aria-label="Archiver la course">
               <i class="fas fa-box-archive"></i>
             </button>
@@ -3065,10 +3366,15 @@ function renderAdminCourses() {
         `;
 
         const actions = card.querySelector('[data-card-actions]');
+        const reopenBtn = actions?.querySelector('[data-action="reopen"]');
         const archiveBtn = actions?.querySelector('[data-action="archive"]');
         const editBtn = actions?.querySelector('[data-action="edit"]');
         const deleteBtn = actions?.querySelector('[data-action="delete"]');
 
+        reopenBtn?.addEventListener('click', (event) => {
+          event.stopPropagation();
+          reopenCourse(course.id);
+        });
         archiveBtn?.addEventListener('click', (event) => {
           event.stopPropagation();
           archiveCourse(course.id);
@@ -3108,6 +3414,9 @@ function renderAdminCourses() {
         </td>
         <td class="px-6 py-4 text-sm font-medium sm:text-right" data-label="Actions">
           <div class="flex flex-wrap gap-3 sm:justify-end">
+            ${course.status === 'completed'
+              ? '<button class="text-emerald-600 hover:text-emerald-800" data-action="reopen" aria-label="Remettre la course en attente"><i class="fas fa-rotate-left"></i></button>'
+              : ''}
             <button class="text-amber-600 hover:text-amber-800" data-action="archive" aria-label="Archiver la course">
               <i class="fas fa-box-archive"></i>
             </button>
@@ -3132,6 +3441,8 @@ function renderAdminCourses() {
             archiveCourse(course.id);
           } else if (action === 'delete') {
             deleteCourse(course.id);
+          } else if (action === 'reopen') {
+            reopenCourse(course.id);
           }
           return;
         }
@@ -3201,6 +3512,8 @@ function renderActivityLog() {
           ? 'a archivé une course'
           : item.action === 'restored'
           ? 'a restauré une course'
+          : item.action === 'reopened'
+          ? 'a remis une course en attente'
           : item.action === 'issue_reported'
           ? 'a signalé un problème sur une course'
           : item.action;
@@ -3369,6 +3682,31 @@ async function deleteCourse(courseId) {
     hideElement(elements.courseModal);
   } catch (error) {
     console.error('Erreur lors de la suppression de la course', error);
+    alert(error.message);
+  }
+}
+
+async function reopenCourse(courseId) {
+  if (!state.isAdmin) {
+    return;
+  }
+
+  if (!confirm('Remettre cette course en attente ?')) {
+    return;
+  }
+
+  try {
+    await apiFetch(`/courses/${courseId}/reopen`, {
+      method: 'POST',
+      body: JSON.stringify({ user: getUserInitials() }),
+    });
+
+    await loadAdminCourses();
+    await loadActivityLog();
+    await loadArchivedCourses();
+    hideElement(elements.courseModal);
+  } catch (error) {
+    console.error('Erreur lors de la remise en attente de la course', error);
     alert(error.message);
   }
 }
@@ -3551,6 +3889,15 @@ async function openCourseModal(courseId) {
       editButton.addEventListener('click', () => editCourse(course.id));
       elements.modalActions.appendChild(editButton);
 
+      if (course.status === 'completed') {
+        const reopenButton = document.createElement('button');
+        reopenButton.type = 'button';
+        reopenButton.className = 'px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition';
+        reopenButton.innerHTML = '<i class="fas fa-rotate-left mr-1"></i> Remettre en attente';
+        reopenButton.addEventListener('click', () => reopenCourse(course.id));
+        elements.modalActions.appendChild(reopenButton);
+      }
+
       const deleteButton = document.createElement('button');
       deleteButton.type = 'button';
       deleteButton.className = 'px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition';
@@ -3690,7 +4037,7 @@ function updateCameraWarning(usingRearCamera) {
     ? warning.className
     : 'mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 animate-fade-up';
   warning.innerHTML =
-    '<i class="fas fa-circle-info mr-1"></i>La caméra arrière n’a pas pu être confirmée. Assurez-vous d’utiliser l’objectif principal de votre téléphone.';
+    '<i class="fas fa-circle-info mr-1"></i>La caméra arrière n\'a pas pu être confirmée. Assurez-vous d\'utiliser l\'objectif principal de votre téléphone.';
   if (!existing) {
     container.appendChild(warning);
   }
@@ -4472,6 +4819,7 @@ function persistSessionState() {
     activeDriverTab: state.activeDriverTab || 'today',
     cameraFacingMode: state.cameraFacingMode,
     displayPreferences: { ...state.displayPreferences },
+    driverPreferencesTab: state.driverPreferences?.activeTab || 'today',
   };
 
   if (state.currentUser.role === 'driver') {
@@ -4570,6 +4918,8 @@ function handleRealtimeEvent(event) {
     default:
       break;
   }
+
+  maybeShowRealtimeNotification(event);
 }
 
 function setupRealtimeUpdates() {
@@ -4656,6 +5006,7 @@ async function restoreSessionFromStorage() {
         adminFilters: saved.adminFilters || {},
         archiveFilters: saved.archiveFilters || {},
         displayPreferences: saved.displayPreferences || {},
+        driverPreferencesTab: saved.driverPreferencesTab || 'today',
       });
       return;
     } catch (error) {
@@ -4673,6 +5024,7 @@ async function restoreSessionFromStorage() {
         skipPasswordCheck: true,
         initialTab: saved.activeDriverTab || 'today',
         displayPreferences: saved.displayPreferences || {},
+        preferencesTab: saved.driverPreferencesTab || 'today',
       });
       return;
     } catch (error) {
@@ -4786,11 +5138,30 @@ function registerEventListeners() {
   elements.driverWeekLayoutButtons?.forEach((button) => {
     button.addEventListener('click', handleDriverWeekLayoutChange);
   });
+  elements.driverPreferencesToggle?.addEventListener('click', toggleDriverPreferences);
+  elements.driverPreferencesClose?.addEventListener('click', closeDriverPreferences);
+  if (elements.driverPreferencesTabs?.length) {
+    elements.driverPreferencesTabs.forEach((button) => {
+      button.addEventListener('click', () => {
+        const tabKey = button.getAttribute('data-driver-preferences-tab') || 'today';
+        setDriverPreferencesTab(tabKey);
+        persistSessionState();
+      });
+    });
+  }
   elements.adminLayoutButtons?.forEach((button) => {
     button.addEventListener('click', handleAdminLayoutChange);
   });
   elements.adminDensityButtons?.forEach((button) => {
     button.addEventListener('click', handleAdminDensityChange);
+  });
+  elements.notificationAllow?.addEventListener('click', (event) => {
+    event.preventDefault();
+    requestNotificationPermission();
+  });
+  elements.notificationDismiss?.addEventListener('click', (event) => {
+    event.preventDefault();
+    handleNotificationDismiss();
   });
 
   elements.adminPlanningTab?.addEventListener('click', () => switchAdminView('planning'));
@@ -4859,6 +5230,9 @@ function registerEventListeners() {
     if (event.target === elements.messagingPanel) {
       closeMessagingPanel();
     }
+    if (event.target === elements.notificationPrompt) {
+      handleNotificationDismiss();
+    }
   });
 }
 
@@ -4869,6 +5243,8 @@ function init() {
   renderDriverManagementPanel();
   renderSettingsTabs();
   applyDisplayPreferences();
+  setDriverPreferencesTab(state.driverPreferences.activeTab);
+  syncDriverPreferencesPanel();
   lockMobileViewport();
   registerEventListeners();
   setupRealtimeUpdates();
@@ -4876,6 +5252,7 @@ function init() {
   restoreSessionFromStorage();
 
   if (typeof window !== 'undefined') {
+    document.addEventListener('keydown', handleGlobalKeyDown);
     window.addEventListener('resize', handleViewportResize);
     window.addEventListener('orientationchange', lockMobileViewport);
   }

@@ -203,31 +203,89 @@
           </button>
         </div>
 
-        <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
-          <div class="flex flex-wrap items-center gap-3">
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-medium text-gray-600">Aujourd'hui</span>
-              <div class="flex gap-2">
-                <button type="button" class="filter-chip" data-driver-layout="cards">
-                  <i class="fas fa-th-large mr-1"></i> Cartes
-                </button>
-                <button type="button" class="filter-chip" data-driver-layout="list">
-                  <i class="fas fa-list mr-1"></i> Liste
-                </button>
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div class="text-xs text-gray-500 max-w-md leading-snug">
+            Retrouvez uniquement l'essentiel : adaptez l'affichage à vos besoins depuis le centre de préférences.
+          </div>
+          <button
+            id="driver-preferences-toggle"
+            type="button"
+            class="btn-tertiary whitespace-nowrap"
+            aria-expanded="false"
+            aria-controls="driver-preferences-panel"
+          >
+            <i class="fas fa-sliders mr-2"></i> Préférences d'affichage
+          </button>
+        </div>
+
+        <section id="driver-preferences-panel" class="driver-preferences hidden" aria-hidden="true">
+          <div class="driver-preferences__header">
+            <div>
+              <h3 class="driver-preferences__title">Préférences d'affichage</h3>
+              <p class="driver-preferences__subtitle">
+                Ajustez vos options pour les vues quotidiennes ou hebdomadaires.
+              </p>
+            </div>
+            <button id="driver-preferences-close" class="driver-preferences__close" aria-label="Fermer les préférences">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <div class="driver-preferences__tabs" role="tablist">
+            <button
+              type="button"
+              class="driver-preferences__tab driver-preferences__tab--active"
+              data-driver-preferences-tab="today"
+              role="tab"
+              aria-selected="true"
+            >
+              Aujourd'hui
+            </button>
+            <button
+              type="button"
+              class="driver-preferences__tab"
+              data-driver-preferences-tab="week"
+              role="tab"
+              aria-selected="false"
+            >
+              Semaine
+            </button>
+          </div>
+          <div class="driver-preferences__content">
+            <div data-driver-preferences-panel="today" aria-hidden="false">
+              <div class="driver-preferences__section">
+                <h4>Disposition</h4>
+                <div class="driver-preferences__options">
+                  <button type="button" class="filter-chip" data-driver-layout="cards">
+                    <i class="fas fa-th-large mr-1"></i> Cartes
+                  </button>
+                  <button type="button" class="filter-chip" data-driver-layout="list">
+                    <i class="fas fa-list mr-1"></i> Liste
+                  </button>
+                </div>
+              </div>
+              <div class="driver-preferences__section">
+                <h4>Lisibilité</h4>
+                <div class="driver-preferences__options">
+                  <button type="button" class="filter-chip" data-driver-density="comfortable">Standard</button>
+                  <button type="button" class="filter-chip" data-driver-density="contrast">Contraste</button>
+                </div>
               </div>
             </div>
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-medium text-gray-600">Lisibilité</span>
-              <div class="flex gap-2">
-                <button type="button" class="filter-chip" data-driver-density="comfortable">Standard</button>
-                <button type="button" class="filter-chip" data-driver-density="contrast">Contraste</button>
+            <div class="hidden" data-driver-preferences-panel="week" aria-hidden="true">
+              <div class="driver-preferences__section">
+                <h4>Disposition du planning</h4>
+                <div class="driver-preferences__options">
+                  <button type="button" class="filter-chip" data-driver-week-layout="list">
+                    <i class="fas fa-table-list mr-1"></i> Liste
+                  </button>
+                  <button type="button" class="filter-chip" data-driver-week-layout="schedule">
+                    <i class="fas fa-calendar-week mr-1"></i> Emploi du temps
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-          <p class="text-xs text-gray-500 max-w-xs leading-snug">
-            Ajustez l'affichage pour rendre vos informations plus confortables lors de vos déplacements.
-          </p>
-        </div>
+        </section>
 
         <div id="today-courses">
           <h2 class="section-title">Vos courses aujourd'hui</h2>
@@ -240,17 +298,6 @@
 
         <div id="week-courses" class="hidden">
           <h2 class="section-title">Vos courses cette semaine</h2>
-          <div class="flex flex-wrap items-center gap-2 mb-4">
-            <span class="text-sm font-medium text-gray-600">Disposition</span>
-            <div class="flex gap-2">
-              <button type="button" class="filter-chip" data-driver-week-layout="list">
-                <i class="fas fa-table-list mr-1"></i> Liste
-              </button>
-              <button type="button" class="filter-chip" data-driver-week-layout="schedule">
-                <i class="fas fa-calendar-week mr-1"></i> Emploi du temps
-              </button>
-            </div>
-          </div>
           <div id="week-table-wrapper" class="overflow-x-auto">
             <table class="responsive-table min-w-full divide-y divide-gray-200">
               <thead class="bg-gray-50">
@@ -881,7 +928,19 @@
 
     <div id="messaging-fab" class="messaging-fab hidden">
       <button id="messaging-toggle" class="messaging-fab__button" aria-label="Ouvrir la messagerie">
-        <i class="fas fa-comments"></i>
+        <span class="messaging-fab__logo" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path
+              d="M16 3C8.8203 3 3 8.0438 3 14.375C3 17.9156 5.04453 21.0484 8.24219 22.9688L7.0625 28.5L13.5625 24.6875C14.3477 24.8125 15.1641 24.875 16 24.875C23.1797 24.875 29 19.8313 29 13.5C29 7.16875 23.1797 3 16 3Z"
+              fill="currentColor"
+            />
+            <path
+              d="M9.53125 12.9688H22.4688C23.3 12.9688 23.9688 13.6375 23.9688 14.4688C23.9688 15.3 23.3 15.9688 22.4688 15.9688H9.53125C8.7 15.9688 8.03125 15.3 8.03125 14.4688C8.03125 13.6375 8.7 12.9688 9.53125 12.9688ZM9.53125 17.875H16.9688C17.8 17.875 18.4688 18.5437 18.4688 19.375C18.4688 20.2063 17.8 20.875 16.9688 20.875H9.53125C8.7 20.875 8.03125 20.2063 8.03125 19.375C8.03125 18.5437 8.7 17.875 9.53125 17.875Z"
+              fill="#F8F9FB"
+            />
+          </svg>
+        </span>
+        <span class="messaging-fab__label">Chat</span>
         <span id="messaging-unread" class="messaging-fab__badge hidden">0</span>
       </button>
     </div>
@@ -920,6 +979,22 @@
               </div>
             </form>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="notification-permission" class="notification-permission hidden" role="dialog" aria-modal="true">
+      <div class="notification-permission__panel">
+        <div class="notification-permission__icon">
+          <i class="fas fa-bell"></i>
+        </div>
+        <h3 class="notification-permission__title">Activer les notifications</h3>
+        <p class="notification-permission__text">
+          Recevez une alerte instantanée lorsqu'une nouvelle course, un message ou une mise à jour importante vous concerne.
+        </p>
+        <div class="notification-permission__actions">
+          <button id="notification-allow" class="btn-primary w-full">Autoriser</button>
+          <button id="notification-dismiss" class="btn-secondary w-full">Plus tard</button>
         </div>
       </div>
     </div>

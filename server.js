@@ -2510,6 +2510,58 @@ app.post('/api/courses/:id/complete', async (req, res) => {
   }
 });
 
+app.post('/api/courses/:id/reopen', async (req, res) => {
+  try {
+    const courseId = req.params.id;
+    const { user } = req.body || {};
+
+    const course = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    if (!course) {
+      return res.status(404).json({ message: 'Course introuvable' });
+    }
+
+    if (course.status !== COURSE_STATUS_COMPLETED) {
+      return res.status(400).json({ message: 'Seules les courses validées peuvent être remises en attente.' });
+    }
+
+    if (course.photo_path) {
+      try {
+        await fs.promises.unlink(course.photo_path);
+      } catch (error) {
+        if (error.code !== 'ENOENT') {
+          console.warn(`Impossible de supprimer la photo ${course.photo_path}`, error.message);
+        }
+      }
+    }
+
+    const updatedAt = new Date().toISOString();
+    await db.run(
+      `UPDATE courses
+          SET status = ?,
+              completion_comments = NULL,
+              photo_path = NULL,
+              issue_reported_at = NULL,
+              issue_report_comment = NULL,
+              issue_reported_by = NULL,
+              updated_at = ?
+        WHERE id = ?`,
+      [COURSE_STATUS_PENDING, updatedAt, courseId]
+    );
+
+    await logActivity(courseId, 'reopened', user || 'LS', 'Course réouverte');
+
+    res.json({ message: 'Course remise en attente' });
+    broadcastEvent('courses:changed', {
+      action: 'reopened',
+      courseId: Number(courseId),
+      driverId: course.driver_id,
+    });
+  } catch (error) {
+    console.error('Error reopening course', error);
+    res.status(500).json({ message: 'Erreur lors de la remise en attente de la course' });
+  }
+});
+
 app.get('/api/messages/unread-count', async (req, res) => {
   try {
     if (!messagesDb) {
