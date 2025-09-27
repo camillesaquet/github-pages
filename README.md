@@ -11,6 +11,8 @@ Application web permettant à l'entreprise Agri Holann de planifier les tournée
 - **Archivage avancé** : onglet dédié pour consulter les courses archivées avec filtres par chauffeur, période et type de marchandise, archivage/désarchivage directement depuis le journal d'activité.
 - **Gestion complète des courses** : création, édition, suppression et validation avec prise de photo du bon de transport.
 - **Notifications par e-mail** : envoi automatique via l'API Gmail avec pièce jointe lors de la validation d'une course et adresse de réception administrable depuis les paramètres.
+- **Signalement d'incident** : un chauffeur peut marquer une course comme « en attente » en décrivant le problème rencontré ; l'administration est immédiatement notifiée et un e-mail d'alerte est expédié.
+- **Messagerie sécurisée et instantanée** : bouton flottant toujours visible permettant aux chauffeurs et administrateurs d'échanger en temps réel, avec notifications des nouveaux messages et historique par chauffeur.
 - **Persistance des données** : stockage des chauffeurs, courses, journaux d'activité et e-mails simulés dans une base SQLite embarquée.
 
 ## Démarrage rapide
@@ -77,7 +79,7 @@ de secours mais ne sont pas éditables dans l'interface.
 
 ### Structure des données
 
-La base SQLite est initialisée automatiquement au démarrage dans le dossier `db/agriholann.db` avec des données de démonstration (chauffeurs et courses). Les photos prises lors des validations ainsi que les pièces jointes des e-mails simulés sont stockées dans `storage/attachments`.
+La base SQLite principale est initialisée automatiquement au démarrage dans le dossier `db/agriholann.db` avec des données de démonstration (chauffeurs et courses). Une base dédiée `db/agriholann-messages.db` enregistre l'historique de la messagerie sécurisée. Les photos prises lors des validations ainsi que les pièces jointes des e-mails simulés sont stockées dans `storage/attachments`.
 
 ### Accès administrateur
 
@@ -119,12 +121,18 @@ La base SQLite est initialisée automatiquement au démarrage dans le dossier `d
 | `PUT /api/courses/:id` | Met à jour une course existante. |
 | `DELETE /api/courses/:id` | Supprime une course et journalise l'opération. |
 | `POST /api/courses/:id/complete` | Valide une course, sauvegarde la photo et journalise l'activité. |
+| `POST /api/courses/:id/report-issue` | Signale un problème sur une course (chauffeur) et notifie l'administration. |
 | `POST /api/courses/:id/archive` | Archive une course active. |
 | `POST /api/courses/:id/unarchive` | Restaure une course archivée. |
 | `GET /api/activity` | Retourne le journal des actions sur les courses. |
 | `GET /api/settings/email-recipient` | Retourne l'adresse email de réception (requiert `X-Admin-Token`). |
 | `PUT /api/settings/email-recipient` | Met à jour l'adresse email de réception (requiert `X-Admin-Token`). |
 | `GET /api/emails` | Liste les e-mails simulés envoyés lors des validations. |
+| `GET /api/messages/unread-count` | Retourne le nombre de messages non lus pour l'utilisateur connecté. |
+| `GET /api/messages/inbox` | Liste les conversations actives (administration). |
+| `GET /api/messages/threads/:driverId` | Récupère l'historique d'échanges avec un chauffeur. |
+| `POST /api/messages` | Envoie un message dans la messagerie sécurisée. |
+| `POST /api/messages/:driverId/read` | Marque les messages d'une conversation comme lus. |
 
 ## Développement futur
 

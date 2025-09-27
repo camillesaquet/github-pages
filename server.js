@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DB_PATH = path.join(__dirname, 'db', 'agriholann.db');
+const MESSAGES_DB_PATH = path.join(__dirname, 'db', 'agriholann-messages.db');
 const ATTACHMENTS_DIR = path.join(__dirname, 'storage', 'attachments');
 const FALLBACK_ADMIN_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || 'admin';
 const SUPER_ADMIN_DEFAULT_PASSWORD = process.env.SUPER_ADMIN_DEFAULT_PASSWORD || 'lannion';
@@ -92,6 +93,10 @@ function loadGmailConfig() {
 }
 const EMAIL_RECIPIENT_SETTING_KEY = 'completion_email_recipient';
 const EMAIL_ATTACHMENT_NAME = 'bon-transport.jpg';
+
+const COURSE_STATUS_PENDING = 'pending';
+const COURSE_STATUS_COMPLETED = 'completed';
+const COURSE_STATUS_ISSUE_REPORTED = 'issue_reported';
 
 const activeAdminSessions = new Map();
 const sseClients = new Set();
@@ -207,6 +212,7 @@ async function ensureDirectoryExists(dirPath) {
 }
 
 let db;
+let messagesDb;
 
 let gmailService = null;
 let gmailConfigSignature = null;
@@ -558,8 +564,120 @@ async function ensureSuperAdmin() {
   }
 }
 
+async function ensureMessagesDatabase() {
+  await ensureDirectoryExists(path.dirname(MESSAGES_DB_PATH));
+
+  messagesDb = await open({
+    filename: MESSAGES_DB_PATH,
+    driver: sqlite3.Database,
+  });
+
+  await messagesDb.exec(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      driver_id INTEGER NOT NULL,
+      sender_type TEXT NOT NULL CHECK(sender_type IN ('driver','admin')),
+      sender_id INTEGER,
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      admin_read_at TEXT,
+      driver_read_at TEXT
+    );
+  `);
+}
+
+function buildPersonInitials(firstName, lastName) {
+  const firstInitial = firstName ? firstName.trim().charAt(0) : '';
+  const lastInitial = lastName ? lastName.trim().charAt(0) : '';
+  const initials = `${firstInitial}${lastInitial}`.toUpperCase();
+  return initials || 'LS';
+}
+
 async function ensureDefaultEmailRecipient() {
   await ensureSetting(EMAIL_RECIPIENT_SETTING_KEY, DEFAULT_COMPLETION_EMAIL);
+}
+
+async function getDriverSummary(driverId) {
+  if (!Number.isInteger(driverId)) {
+    return null;
+  }
+  return db.get(
+    `SELECT id, first_name, last_name, email FROM drivers WHERE id = ?`,
+    [driverId]
+  );
+}
+
+async function getAdminSummary(adminId) {
+  if (!Number.isInteger(adminId)) {
+    return null;
+  }
+  return db.get(
+    `SELECT id, first_name, last_name, identifier FROM admins WHERE id = ?`,
+    [adminId]
+  );
+}
+
+function normalizeMessageBody(body) {
+  if (typeof body !== 'string') {
+    return '';
+  }
+  return body.trim();
+}
+
+async function serializeMessage(row) {
+  if (!row) {
+    return null;
+  }
+
+  const base = {
+    id: row.id,
+    driverId: row.driver_id,
+    senderType: row.sender_type,
+    senderId: row.sender_id,
+    body: row.body,
+    createdAt: row.created_at,
+    adminReadAt: row.admin_read_at || null,
+    driverReadAt: row.driver_read_at || null,
+  };
+
+  if (row.sender_type === 'driver') {
+    const driver = await getDriverSummary(row.driver_id);
+    const firstName = driver?.first_name || '';
+    const lastName = driver?.last_name || '';
+    base.senderLabel = `${firstName} ${lastName}`.trim() || 'Chauffeur';
+    base.senderInitials = buildPersonInitials(firstName, lastName);
+  } else if (row.sender_type === 'admin') {
+    const admin = await getAdminSummary(row.sender_id ?? 0);
+    const firstName = admin?.first_name || '';
+    const lastName = admin?.last_name || '';
+    base.senderLabel = admin ? `${firstName} ${lastName}`.trim() || admin.identifier || 'Admin' : 'Admin';
+    base.senderInitials = buildPersonInitials(firstName, lastName);
+  } else {
+    base.senderLabel = 'Système';
+    base.senderInitials = 'SYS';
+  }
+
+  return base;
+}
+
+async function markMessagesAsRead(driverId, readerType) {
+  if (!messagesDb) {
+    return;
+  }
+
+  const now = new Date().toISOString();
+
+  if (readerType === 'admin') {
+    await messagesDb.run(
+      `UPDATE messages SET admin_read_at = ? WHERE driver_id = ? AND sender_type = 'driver' AND admin_read_at IS NULL`,
+      [now, driverId]
+    );
+  } else if (readerType === 'driver') {
+    await messagesDb.run(
+      `UPDATE messages SET driver_read_at = ? WHERE driver_id = ? AND sender_type = 'admin' AND driver_read_at IS NULL`,
+      [now, driverId]
+    );
+  }
 }
 
 async function initDatabase() {
@@ -572,6 +690,12 @@ async function initDatabase() {
   });
 
   await db.exec('PRAGMA foreign_keys = ON');
+
+  await ensureMessagesDatabase();
+
+  if (messagesDb) {
+    await messagesDb.exec('PRAGMA foreign_keys = ON');
+  }
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS drivers (
@@ -592,6 +716,9 @@ async function initDatabase() {
       merchandise TEXT,
       comments TEXT,
       status TEXT NOT NULL DEFAULT 'pending',
+      issue_reported_at TEXT,
+      issue_report_comment TEXT,
+      issue_reported_by INTEGER,
       photo_path TEXT,
       completion_comments TEXT,
       archived_at TEXT,
@@ -639,6 +766,9 @@ async function initDatabase() {
   `);
 
   await ensureColumn('courses', 'archived_at', 'TEXT');
+  await ensureColumn('courses', 'issue_reported_at', 'TEXT');
+  await ensureColumn('courses', 'issue_report_comment', 'TEXT');
+  await ensureColumn('courses', 'issue_reported_by', 'INTEGER');
   await ensureColumn('admins', 'password_hash', 'TEXT');
   await ensureColumn("admins", 'role', "TEXT NOT NULL DEFAULT 'standard'");
   await ensureColumn('drivers', 'password_hash', 'TEXT');
@@ -907,6 +1037,36 @@ async function sendCompletionEmail(course, driver, completionComments, photoData
   });
 
   await recordEmail(course.id, to, subject, body, attachmentBuffer, attachmentName);
+
+  return { to, subject, body, messageId: response?.id || null };
+}
+
+async function sendCourseIssueEmail(course, driver, issueComment) {
+  const to = await getCompletionEmailRecipient();
+
+  if (!to) {
+    throw new Error('Aucun destinataire configuré pour les notifications de problème.');
+  }
+
+  const driverFirstName = driver?.first_name || driver?.firstName || '';
+  const driverLastName = driver?.last_name || driver?.lastName || '';
+  const driverLabel = `${driverFirstName} ${driverLastName}`.trim() || 'Chauffeur';
+  const departure = course.departure || 'Lieu de départ non renseigné';
+  const destination = course.destination || 'Destination non renseignée';
+  const dateTime = course.date_time || course.dateTime || new Date().toISOString();
+  const dateLabel = new Date(dateTime).toLocaleString('fr-FR');
+  const comment = issueComment && issueComment.trim() ? issueComment.trim() : 'Aucun détail fourni';
+
+  const subject = `[Incident] ${driverLabel} – ${destination}`;
+  const body = `Le chauffeur ${driverLabel} a signalé un problème sur la course prévue le ${dateLabel}.\n\nTrajet : ${departure} → ${destination}\nCommentaire : ${comment}`;
+
+  const response = await sendGmailMessage({
+    to,
+    subject,
+    text: body,
+  });
+
+  await recordEmail(course.id, to, subject, body, null, EMAIL_ATTACHMENT_NAME);
 
   return { to, subject, body, messageId: response?.id || null };
 }
@@ -1706,6 +1866,9 @@ app.get('/api/courses', async (req, res) => {
         merchandise: row.merchandise,
         comments: row.comments,
         status: row.status,
+        issueReportedAt: row.issue_reported_at,
+        issueReportComment: row.issue_report_comment,
+        issueReportedBy: row.issue_reported_by,
         photoUrl: row.photo_path ? `/storage/attachments/${path.basename(row.photo_path)}` : null,
         completionComments: row.completion_comments,
         archivedAt: row.archived_at,
@@ -1746,6 +1909,9 @@ app.get('/api/courses/:id', async (req, res) => {
       merchandise: row.merchandise,
       comments: row.comments,
       status: row.status,
+      issueReportedAt: row.issue_reported_at,
+      issueReportComment: row.issue_report_comment,
+      issueReportedBy: row.issue_reported_by,
       photoUrl: row.photo_path ? `/storage/attachments/${path.basename(row.photo_path)}` : null,
       completionComments: row.completion_comments,
       archivedAt: row.archived_at,
@@ -1938,6 +2104,82 @@ app.post('/api/courses/:id/unarchive', async (req, res) => {
   }
 });
 
+app.post('/api/courses/:id/report-issue', async (req, res) => {
+  try {
+    const courseId = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(courseId)) {
+      return res.status(400).json({ message: 'Identifiant de course invalide.' });
+    }
+
+    const { driverId, comment } = req.body || {};
+    const normalizedComment = typeof comment === 'string' ? comment.trim() : '';
+
+    if (!driverId || !Number.isInteger(Number(driverId))) {
+      return res.status(400).json({ message: 'Chauffeur requis pour signaler un problème.' });
+    }
+
+    const course = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    if (!course) {
+      return res.status(404).json({ message: 'Course introuvable.' });
+    }
+
+    if (course.driver_id !== Number(driverId)) {
+      return res.status(403).json({ message: 'Ce chauffeur ne peut pas signaler cette course.' });
+    }
+
+    if (course.status === COURSE_STATUS_COMPLETED) {
+      return res.status(400).json({ message: 'Impossible de signaler une course déjà validée.' });
+    }
+
+    const driver = await getDriverSummary(course.driver_id);
+    if (!driver) {
+      return res.status(404).json({ message: 'Chauffeur introuvable.' });
+    }
+
+    const updatedAt = new Date().toISOString();
+
+    await db.run(
+      `UPDATE courses
+          SET status = ?,
+              issue_reported_at = ?,
+              issue_report_comment = ?,
+              issue_reported_by = ?,
+              updated_at = ?
+        WHERE id = ?`,
+      [
+        COURSE_STATUS_ISSUE_REPORTED,
+        updatedAt,
+        normalizedComment || null,
+        course.driver_id,
+        updatedAt,
+        courseId,
+      ]
+    );
+
+    const initials = buildPersonInitials(driver.first_name, driver.last_name);
+    await logActivity(courseId, 'issue_reported', initials, {
+      comment: normalizedComment || undefined,
+    });
+
+    let emailResult = null;
+    try {
+      emailResult = await sendCourseIssueEmail(course, driver, normalizedComment);
+    } catch (emailError) {
+      console.error("Erreur lors de l'envoi de la notification de problème", emailError);
+    }
+
+    res.json({ message: 'Problème signalé', email: emailResult });
+    broadcastEvent('courses:changed', {
+      action: 'issue_reported',
+      courseId,
+      driverId: course.driver_id,
+    });
+  } catch (error) {
+    console.error('Error reporting course issue', error);
+    res.status(500).json({ message: "Erreur lors du signalement du problème" });
+  }
+});
+
 app.post('/api/courses/:id/complete', async (req, res) => {
   try {
     const courseId = req.params.id;
@@ -1984,6 +2226,306 @@ app.post('/api/courses/:id/complete', async (req, res) => {
     res
       .status(500)
       .json({ message: error.message || 'Erreur lors de la validation de la course' });
+  }
+});
+
+app.get('/api/messages/unread-count', async (req, res) => {
+  try {
+    if (!messagesDb) {
+      throw new Error('Base de données des messages indisponible');
+    }
+
+    const role = (req.query.role || '').toLowerCase();
+
+    if (role === 'admin') {
+      const sessionInfo = await enforceAdminSession(req, res, {
+        allowRoles: Array.from(ADMIN_ROLES),
+      });
+      if (!sessionInfo) {
+        return;
+      }
+
+      const totalRow = await messagesDb.get(
+        `SELECT COUNT(*) AS total FROM messages WHERE sender_type = 'driver' AND admin_read_at IS NULL`
+      );
+      const perDriverRows = await messagesDb.all(
+        `SELECT driver_id AS driverId, COUNT(*) AS count
+           FROM messages
+          WHERE sender_type = 'driver' AND admin_read_at IS NULL
+          GROUP BY driver_id`
+      );
+
+      res.json({
+        total: totalRow?.total || 0,
+        perDriver: perDriverRows || [],
+      });
+      return;
+    }
+
+    if (role === 'driver') {
+      const driverId = Number.parseInt(req.query.driverId, 10);
+      if (!Number.isInteger(driverId)) {
+        return res.status(400).json({ message: 'Identifiant chauffeur invalide.' });
+      }
+
+      const driver = await getDriverSummary(driverId);
+      if (!driver) {
+        return res.status(404).json({ message: 'Chauffeur introuvable.' });
+      }
+
+      const row = await messagesDb.get(
+        `SELECT COUNT(*) AS total
+           FROM messages
+          WHERE driver_id = ? AND sender_type = 'admin' AND driver_read_at IS NULL`,
+        [driverId]
+      );
+
+      res.json({ total: row?.total || 0 });
+      return;
+    }
+
+    res.status(400).json({ message: 'Rôle invalide pour la récupération des messages.' });
+  } catch (error) {
+    console.error('Error fetching unread message count', error);
+    res.status(500).json({ message: 'Erreur lors de la récupération du nombre de messages.' });
+  }
+});
+
+app.get('/api/messages/inbox', async (req, res) => {
+  try {
+    if (!messagesDb) {
+      throw new Error('Base de données des messages indisponible');
+    }
+
+    const sessionInfo = await enforceAdminSession(req, res, {
+      allowRoles: Array.from(ADMIN_ROLES),
+    });
+    if (!sessionInfo) {
+      return;
+    }
+
+    const rows = await messagesDb.all(
+      `SELECT * FROM messages ORDER BY datetime(created_at) DESC LIMIT 500`
+    );
+
+    const threads = new Map();
+
+    for (const row of rows) {
+      const thread = threads.get(row.driver_id) || {
+        driverId: row.driver_id,
+        lastMessageAt: row.created_at,
+        lastMessageBody: row.body,
+        lastSenderType: row.sender_type,
+        unreadFromDriver: 0,
+      };
+
+      if (!threads.has(row.driver_id)) {
+        thread.lastMessageAt = row.created_at;
+        thread.lastMessageBody = row.body;
+        thread.lastSenderType = row.sender_type;
+      }
+
+      if (row.sender_type === 'driver' && !row.admin_read_at) {
+        thread.unreadFromDriver += 1;
+      }
+
+      threads.set(row.driver_id, thread);
+    }
+
+    const driverIds = Array.from(threads.keys());
+    const driverSummaries = await Promise.all(driverIds.map((id) => getDriverSummary(id)));
+
+    const payload = driverIds.map((driverId, index) => {
+      const summary = driverSummaries[index];
+      const info = threads.get(driverId);
+      return {
+        driverId,
+        driverName: summary
+          ? `${summary.first_name || ''} ${summary.last_name || ''}`.trim() || 'Chauffeur'
+          : 'Chauffeur',
+        unreadFromDriver: info.unreadFromDriver,
+        lastMessageAt: info.lastMessageAt,
+        lastMessageBody: info.lastMessageBody,
+        lastSenderType: info.lastSenderType,
+      };
+    });
+
+    res.json(payload);
+  } catch (error) {
+    console.error('Error fetching message inbox', error);
+    res.status(500).json({ message: 'Erreur lors de la récupération des conversations.' });
+  }
+});
+
+app.get('/api/messages/threads/:driverId', async (req, res) => {
+  try {
+    if (!messagesDb) {
+      throw new Error('Base de données des messages indisponible');
+    }
+
+    const driverId = Number.parseInt(req.params.driverId, 10);
+    if (!Number.isInteger(driverId)) {
+      return res.status(400).json({ message: 'Identifiant chauffeur invalide.' });
+    }
+
+    const role = (req.query.role || '').toLowerCase();
+
+    if (role === 'admin') {
+      const sessionInfo = await enforceAdminSession(req, res, {
+        allowRoles: Array.from(ADMIN_ROLES),
+      });
+      if (!sessionInfo) {
+        return;
+      }
+    } else {
+      const driverIdQuery = Number.parseInt(req.query.driverId || driverId, 10);
+      if (driverIdQuery !== driverId) {
+        return res.status(403).json({ message: 'Accès refusé.' });
+      }
+    }
+
+    const driver = await getDriverSummary(driverId);
+    if (!driver) {
+      return res.status(404).json({ message: 'Chauffeur introuvable.' });
+    }
+
+    const rows = await messagesDb.all(
+      `SELECT * FROM messages WHERE driver_id = ? ORDER BY datetime(created_at) ASC`,
+      [driverId]
+    );
+
+    const messages = await Promise.all(rows.map((row) => serializeMessage(row)));
+
+    const readerType = role === 'admin' ? 'admin' : 'driver';
+    await markMessagesAsRead(driverId, readerType);
+
+    broadcastEvent('messages:read', {
+      driverId,
+      readerType,
+    });
+
+    res.json({
+      driver: {
+        id: driver.id,
+        firstName: driver.first_name,
+        lastName: driver.last_name,
+      },
+      messages,
+    });
+  } catch (error) {
+    console.error('Error fetching message thread', error);
+    res.status(500).json({ message: 'Erreur lors de la récupération de la conversation.' });
+  }
+});
+
+app.post('/api/messages', async (req, res) => {
+  try {
+    if (!messagesDb) {
+      throw new Error('Base de données des messages indisponible');
+    }
+
+    const { driverId, body, senderType } = req.body || {};
+    const normalizedBody = normalizeMessageBody(body);
+
+    if (!driverId || !Number.isInteger(Number(driverId))) {
+      return res.status(400).json({ message: 'Identifiant chauffeur manquant.' });
+    }
+
+    if (!normalizedBody) {
+      return res.status(400).json({ message: 'Le message ne peut pas être vide.' });
+    }
+
+    const driver = await getDriverSummary(Number(driverId));
+    if (!driver) {
+      return res.status(404).json({ message: 'Chauffeur introuvable.' });
+    }
+
+    let senderId = null;
+    const now = new Date().toISOString();
+    let adminReadAt = null;
+    let driverReadAt = null;
+
+    if (senderType === 'admin') {
+      const sessionInfo = await enforceAdminSession(req, res, {
+        allowRoles: Array.from(ADMIN_ROLES),
+      });
+      if (!sessionInfo) {
+        return;
+      }
+      senderId = sessionInfo.admin.id;
+      adminReadAt = now;
+    } else if (senderType === 'driver') {
+      if (Number(driverId) !== Number(req.body.driverId)) {
+        return res.status(403).json({ message: 'Accès refusé.' });
+      }
+      driverReadAt = now;
+    } else {
+      return res.status(400).json({ message: "Type d'envoyeur invalide." });
+    }
+
+    const insertResult = await messagesDb.run(
+      `INSERT INTO messages (driver_id, sender_type, sender_id, body, created_at, admin_read_at, driver_read_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [Number(driverId), senderType, senderId, normalizedBody, now, adminReadAt, driverReadAt]
+    );
+
+    const row = await messagesDb.get('SELECT * FROM messages WHERE id = ?', [insertResult.lastID]);
+    const message = await serializeMessage(row);
+
+    broadcastEvent('messages:new', {
+      driverId: Number(driverId),
+      senderType,
+      message,
+    });
+
+    res.status(201).json(message);
+  } catch (error) {
+    console.error('Error creating message', error);
+    res.status(500).json({ message: "Erreur lors de l'envoi du message." });
+  }
+});
+
+app.post('/api/messages/:driverId/read', async (req, res) => {
+  try {
+    if (!messagesDb) {
+      throw new Error('Base de données des messages indisponible');
+    }
+
+    const driverId = Number.parseInt(req.params.driverId, 10);
+    if (!Number.isInteger(driverId)) {
+      return res.status(400).json({ message: 'Identifiant chauffeur invalide.' });
+    }
+
+    const { readerType } = req.body || {};
+    if (!readerType || (readerType !== 'admin' && readerType !== 'driver')) {
+      return res.status(400).json({ message: 'Type de lecteur invalide.' });
+    }
+
+    if (readerType === 'admin') {
+      const sessionInfo = await enforceAdminSession(req, res, {
+        allowRoles: Array.from(ADMIN_ROLES),
+      });
+      if (!sessionInfo) {
+        return;
+      }
+    } else {
+      const driver = await getDriverSummary(driverId);
+      if (!driver) {
+        return res.status(404).json({ message: 'Chauffeur introuvable.' });
+      }
+    }
+
+    await markMessagesAsRead(driverId, readerType);
+
+    broadcastEvent('messages:read', {
+      driverId,
+      readerType,
+    });
+
+    res.json({ message: 'Messages marqués comme lus.' });
+  } catch (error) {
+    console.error('Error marking messages as read', error);
+    res.status(500).json({ message: 'Erreur lors de la mise à jour des messages.' });
   }
 });
 

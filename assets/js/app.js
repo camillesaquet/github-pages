@@ -48,6 +48,19 @@ const state = {
     loading: false,
     editingDriverId: null,
   },
+  courseIssue: {
+    courseId: null,
+    submitting: false,
+  },
+  messaging: {
+    unreadCount: 0,
+    isOpen: false,
+    loading: false,
+    messages: [],
+    threads: [],
+    activeDriverId: null,
+    sending: false,
+  },
   settings: {
     emailRecipient: '',
     loaded: false,
@@ -136,6 +149,12 @@ const elements = {
   driverPasswordCancel: document.getElementById('driver-password-cancel'),
   driverPasswordError: document.getElementById('driver-password-error'),
   driverPasswordName: document.getElementById('driver-password-name'),
+  courseIssueModal: document.getElementById('course-issue-modal'),
+  courseIssueForm: document.getElementById('course-issue-form'),
+  courseIssueComment: document.getElementById('course-issue-comment'),
+  courseIssueError: document.getElementById('course-issue-error'),
+  courseIssueCancel: document.getElementById('course-issue-cancel'),
+  courseIssueClose: document.getElementById('course-issue-close'),
   driverManagementForm: document.getElementById('driver-management-form'),
   driverFirstNameInput: document.getElementById('driver-first-name'),
   driverLastNameInput: document.getElementById('driver-last-name'),
@@ -158,6 +177,18 @@ const elements = {
   noArchive: document.getElementById('no-archive'),
   emailSettingsForm: document.getElementById('email-settings-form'),
   emailRecipientInput: document.getElementById('email-recipient'),
+  messagingFab: document.getElementById('messaging-fab'),
+  messagingToggle: document.getElementById('messaging-toggle'),
+  messagingUnread: document.getElementById('messaging-unread'),
+  messagingPanel: document.getElementById('messaging-panel'),
+  messagingClose: document.getElementById('messaging-close'),
+  messagingMessages: document.getElementById('messaging-messages'),
+  messagingForm: document.getElementById('messaging-form'),
+  messagingInput: document.getElementById('messaging-input'),
+  messagingError: document.getElementById('messaging-error'),
+  messagingThreadList: document.getElementById('messaging-thread-list'),
+  messagingDriverPicker: document.getElementById('messaging-driver-picker'),
+  messagingSubtitle: document.getElementById('messaging-subtitle'),
   emailSettingsStatus: document.getElementById('email-settings-status'),
   settingsTabButtons: document.querySelectorAll('[data-settings-tab]'),
   settingsPanels: document.querySelectorAll('[data-settings-panel]'),
@@ -255,6 +286,18 @@ function normalizeAdmin(admin) {
   };
 }
 
+function escapeHtml(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function mapCourse(course) {
   const date = new Date(course.dateTime || course.date_time || course.date);
   const normalized = {
@@ -267,6 +310,8 @@ function mapCourse(course) {
     merchandise: course.merchandise || '',
     comments: course.comments || '',
     status: course.status,
+    issueReportedAt: course.issueReportedAt || course.issue_reported_at || null,
+    issueReportComment: course.issueReportComment || course.issue_report_comment || '',
     photoUrl: course.photoUrl || course.photo_path || null,
     completionComments: course.completionComments || course.completion_comments || '',
     createdAt: course.createdAt || course.created_at || null,
@@ -277,6 +322,41 @@ function mapCourse(course) {
 
   state.courseCache.set(normalized.id, normalized);
   return normalized;
+}
+
+function getCourseStatusMeta(course, { archivedClass = 'bg-gray-200 text-gray-600' } = {}) {
+  if (!course) {
+    return {
+      label: 'Inconnu',
+      className: 'bg-gray-200 text-gray-600',
+    };
+  }
+
+  if (course.isArchived) {
+    return {
+      label: 'Archivée',
+      className: archivedClass,
+    };
+  }
+
+  if (course.status === 'completed') {
+    return {
+      label: 'Terminé',
+      className: 'bg-green-100 text-green-800',
+    };
+  }
+
+  if (course.status === 'issue_reported') {
+    return {
+      label: 'En attente',
+      className: 'bg-red-100 text-red-700',
+    };
+  }
+
+  return {
+    label: 'À faire',
+    className: 'bg-yellow-100 text-yellow-800',
+  };
 }
 
 function startOfDay(date) {
@@ -412,6 +492,7 @@ async function loginAsDriver(driver, options = {}) {
   state.activeDriverTab = initialTab;
   switchTab(initialTab);
   await loadDriverCourses();
+  updateMessagingAvailability();
   persistSessionState();
 }
 
@@ -592,6 +673,7 @@ function setAdminSession(admin, options = {}) {
   if (state.currentUser.adminLevel === 'superadmin') {
     loadAdmins();
   }
+  updateMessagingAvailability();
   persistSessionState();
 }
 
@@ -1070,6 +1152,7 @@ async function logout(event) {
   state.activityLog = [];
   state.courseCache.clear();
   resetAdminEditState();
+  resetMessagingState();
   elements.lastnameInput.value = '';
   elements.driverList.innerHTML = '';
   hideElement(elements.driverDashboard);
@@ -2114,16 +2197,7 @@ function renderTodayCourses() {
       container.className = `${baseClasses} ${archived ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`;
       container.setAttribute('aria-disabled', archived ? 'true' : 'false');
 
-      const statusClass = archived
-        ? 'bg-gray-200 text-gray-600'
-        : course.status === 'completed'
-        ? 'bg-green-100 text-green-800'
-        : 'bg-yellow-100 text-yellow-800';
-      const statusLabel = archived
-        ? 'Archivée'
-        : course.status === 'completed'
-        ? 'Terminé'
-        : 'À faire';
+      const statusMeta = getCourseStatusMeta(course);
 
       container.innerHTML = `
         <div class="flex justify-between items-start">
@@ -2131,8 +2205,8 @@ function renderTodayCourses() {
             <div class="font-medium">${course.departure} → ${course.destination}</div>
             <div class="text-sm text-gray-500 mt-1">${formatTime(course.date)} • ${course.merchandise}</div>
           </div>
-          <span class="px-2 py-1 text-xs rounded-full ${statusClass}">
-            ${statusLabel}
+          <span class="px-2 py-1 text-xs rounded-full ${statusMeta.className}">
+            ${statusMeta.label}
           </span>
         </div>
         ${course.comments ? `<div class="mt-2 text-sm text-gray-600"><i class="fas fa-comment mr-1"></i> ${course.comments}</div>` : ''}
@@ -2140,6 +2214,28 @@ function renderTodayCourses() {
 
       if (!archived) {
         container.addEventListener('click', () => openCourseModal(course.id));
+      }
+
+      if (course.status === 'issue_reported' && course.issueReportComment) {
+        const issueNotice = document.createElement('div');
+        issueNotice.className = 'mt-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2';
+        issueNotice.textContent = `Problème signalé : ${course.issueReportComment || 'Détail non renseigné'}`;
+        container.appendChild(issueNotice);
+      }
+
+      if (!archived && course.status !== 'completed' && course.status !== 'issue_reported') {
+        const buttonWrapper = document.createElement('div');
+        buttonWrapper.className = 'mt-3 flex justify-end';
+        const issueButton = document.createElement('button');
+        issueButton.type = 'button';
+        issueButton.className = 'inline-flex items-center px-3 py-1.5 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100';
+        issueButton.innerHTML = '<i class="fas fa-exclamation-triangle mr-2"></i>Signaler un problème';
+        issueButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          openCourseIssueModal(course.id);
+        });
+        buttonWrapper.appendChild(issueButton);
+        container.appendChild(buttonWrapper);
       }
 
       elements.todayList.appendChild(container);
@@ -2165,16 +2261,9 @@ function renderWeekCourses() {
       row.className = `${archived ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'hover:bg-gray-50 cursor-pointer'}`;
       row.setAttribute('aria-disabled', archived ? 'true' : 'false');
 
-      const statusClass = archived
-        ? 'bg-gray-200 text-gray-600'
-        : course.status === 'completed'
-        ? 'bg-green-100 text-green-800'
-        : 'bg-yellow-100 text-yellow-800';
-      const statusLabel = archived
-        ? 'Archivée'
-        : course.status === 'completed'
-        ? 'Terminé'
-        : 'À faire';
+      const statusMeta = getCourseStatusMeta(course, {
+        archivedClass: 'bg-gray-300 text-gray-700',
+      });
 
       row.innerHTML = `
         <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Date">${formatDate(course.date)}</td>
@@ -2182,9 +2271,14 @@ function renderWeekCourses() {
         <td class="px-6 py-4 text-sm" data-label="Arrivée">${course.destination}</td>
         <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Horaire">${formatTime(course.date)}</td>
         <td class="px-6 py-4" data-label="Statut">
-          <span class="px-2 py-1 text-xs rounded-full ${statusClass}">
-            ${statusLabel}
-          </span>
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <span class="px-2 py-1 text-xs rounded-full ${statusMeta.className}">
+              ${statusMeta.label}
+            </span>
+            ${!archived && course.status !== 'completed' && course.status !== 'issue_reported'
+              ? '<button type="button" class="issue-button text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-md px-2 py-1 hover:bg-red-100"><i class="fas fa-exclamation-triangle mr-1"></i>Signaler un problème</button>'
+              : ''}
+          </div>
         </td>
       `;
 
@@ -2192,7 +2286,28 @@ function renderWeekCourses() {
         row.addEventListener('click', () => openCourseModal(course.id));
       }
 
-      elements.weekList.appendChild(row);
+      if (course.status === 'issue_reported' && course.issueReportComment) {
+        const detailRow = document.createElement('tr');
+        detailRow.className = 'bg-red-50';
+        const cell = document.createElement('td');
+        cell.colSpan = 5;
+        cell.className = 'px-6 py-3 text-sm text-red-700 border-t border-red-100';
+        const issueText = course.issueReportComment || 'Détail non renseigné';
+        cell.innerHTML = `<i class="fas fa-circle-exclamation mr-2"></i>Problème signalé : ${escapeHtml(issueText)}`;
+        detailRow.appendChild(cell);
+        elements.weekList.appendChild(row);
+        elements.weekList.appendChild(detailRow);
+      } else {
+        elements.weekList.appendChild(row);
+      }
+
+      const issueButton = row.querySelector('.issue-button');
+      if (issueButton) {
+        issueButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          openCourseIssueModal(course.id);
+        });
+      }
     });
 }
 
@@ -2212,8 +2327,9 @@ function renderAdminCourses() {
     .forEach((course) => {
       const row = document.createElement('tr');
       row.className = 'hover:bg-gray-50';
-      const statusClass =
-        course.status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
+      const statusMeta = getCourseStatusMeta(course, {
+        archivedClass: 'bg-gray-200 text-gray-600',
+      });
 
       row.innerHTML = `
         <td class="px-6 py-4 text-sm" data-label="Chauffeur">${course.driverName || ''}</td>
@@ -2222,9 +2338,14 @@ function renderAdminCourses() {
         <td class="px-6 py-4 text-sm" data-label="Arrivée">${course.destination}</td>
         <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Horaire">${formatTime(course.date)}</td>
         <td class="px-6 py-4" data-label="Statut">
-          <span class="px-2 py-1 text-xs rounded-full ${statusClass}">
-            ${course.status === 'completed' ? 'Terminé' : 'À faire'}
-          </span>
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <span class="px-2 py-1 text-xs rounded-full ${statusMeta.className}">
+              ${statusMeta.label}
+            </span>
+            ${course.status === 'issue_reported'
+              ? '<span class="text-xs font-medium text-red-700"><i class="fas fa-circle-exclamation mr-1"></i>Problème en attente</span>'
+              : ''}
+          </div>
         </td>
         <td class="px-6 py-4 text-sm font-medium sm:text-right" data-label="Actions">
           <div class="flex flex-wrap gap-3 sm:justify-end">
@@ -2320,6 +2441,8 @@ function renderActivityLog() {
           ? 'a archivé une course'
           : item.action === 'restored'
           ? 'a restauré une course'
+          : item.action === 'issue_reported'
+          ? 'a signalé un problème sur une course'
           : item.action;
       primaryText = `${item.user} ${actionText}${driverSuffix}`;
     }
@@ -2618,6 +2741,16 @@ async function openCourseModal(courseId) {
             <p class="mt-1 text-sm text-gray-900">${course.comments}</p>
           </div>
         ` : ''}
+        ${course.status === 'issue_reported' ? `
+          <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2">
+            <div class="text-sm font-medium text-red-700 flex items-center gap-2">
+              <i class="fas fa-circle-exclamation"></i>
+              <span>Problème signalé</span>
+            </div>
+            <p class="mt-2 text-sm text-red-700">${escapeHtml(course.issueReportComment || 'Commentaire non renseigné')}</p>
+            ${course.issueReportedAt ? `<p class="mt-1 text-xs text-red-500">Signalé le ${new Date(course.issueReportedAt).toLocaleString('fr-FR')}</p>` : ''}
+          </div>
+        ` : ''}
         ${course.status === 'completed' ? `
           <div>
             <h4 class="text-sm font-medium text-gray-500">Photo du bon</h4>
@@ -2659,7 +2792,7 @@ async function openCourseModal(courseId) {
       deleteButton.innerHTML = '<i class="fas fa-trash mr-1"></i> Supprimer';
       deleteButton.addEventListener('click', () => deleteCourse(course.id));
       elements.modalActions.appendChild(deleteButton);
-    } else if (course.status !== 'completed' && !isArchived) {
+    } else if (course.status !== 'completed' && course.status !== 'issue_reported' && !isArchived) {
       const validateButton = document.createElement('button');
       validateButton.type = 'button';
       validateButton.className = 'px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition';
@@ -2728,6 +2861,607 @@ function closePhotoModal() {
 
   hideElement(elements.photoModal);
   state.photoDataUrl = null;
+}
+
+function openCourseIssueModal(courseId) {
+  if (state.currentUser?.role !== 'driver') {
+    return;
+  }
+
+  const course = state.courseCache.get(courseId);
+  if (!course || course.isArchived || course.status === 'completed' || course.status === 'issue_reported') {
+    return;
+  }
+
+  state.courseIssue.courseId = courseId;
+  state.courseIssue.submitting = false;
+  elements.courseIssueComment.value = '';
+  elements.courseIssueError.classList.add('hidden');
+  showElement(elements.courseIssueModal);
+}
+
+function closeCourseIssueModal() {
+  state.courseIssue.courseId = null;
+  state.courseIssue.submitting = false;
+  elements.courseIssueComment.value = '';
+  elements.courseIssueError.classList.add('hidden');
+  hideElement(elements.courseIssueModal);
+}
+
+async function handleCourseIssueSubmit(event) {
+  event.preventDefault();
+
+  if (!state.courseIssue.courseId) {
+    return;
+  }
+
+  const comment = elements.courseIssueComment.value.trim();
+  if (!comment) {
+    elements.courseIssueError.textContent = 'Veuillez renseigner un commentaire.';
+    elements.courseIssueError.classList.remove('hidden');
+    return;
+  }
+
+  try {
+    state.courseIssue.submitting = true;
+    elements.courseIssueError.classList.add('hidden');
+    const submitBtn = elements.courseIssueForm.querySelector('button[type="submit"]');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.classList.add('opacity-75');
+    }
+
+    await apiFetch(`/courses/${state.courseIssue.courseId}/report-issue`, {
+      method: 'POST',
+      body: JSON.stringify({
+        driverId: state.currentUser?.id,
+        comment,
+      }),
+    });
+
+    closeCourseIssueModal();
+    await loadDriverCourses();
+  } catch (error) {
+    console.error('Erreur lors du signalement du problème', error);
+    elements.courseIssueError.textContent = error.message || 'Impossible de signaler le problème.';
+    elements.courseIssueError.classList.remove('hidden');
+  } finally {
+    state.courseIssue.submitting = false;
+    const submitBtn = elements.courseIssueForm.querySelector('button[type="submit"]');
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.classList.remove('opacity-75');
+    }
+  }
+}
+
+function resetMessagingState({ preserveAvailability = false } = {}) {
+  state.messaging.unreadCount = 0;
+  state.messaging.isOpen = false;
+  state.messaging.loading = false;
+  state.messaging.messages = [];
+  state.messaging.threads = [];
+  state.messaging.activeDriverId = null;
+  state.messaging.sending = false;
+
+  if (elements.messagingInput) {
+    elements.messagingInput.value = '';
+  }
+  if (elements.messagingError) {
+    elements.messagingError.textContent = '';
+    elements.messagingError.classList.add('hidden');
+  }
+  if (elements.messagingMessages) {
+    elements.messagingMessages.innerHTML = '';
+  }
+  if (elements.messagingThreadList) {
+    elements.messagingThreadList.innerHTML = '';
+  }
+  if (elements.messagingUnread) {
+    elements.messagingUnread.classList.add('hidden');
+    elements.messagingUnread.textContent = '0';
+  }
+
+  hideElement(elements.messagingPanel);
+  if (!preserveAvailability) {
+    hideElement(elements.messagingFab);
+  }
+}
+
+function updateMessagingSubtitle() {
+  if (!elements.messagingSubtitle) {
+    return;
+  }
+
+  if (!state.currentUser) {
+    elements.messagingSubtitle.textContent = '';
+    return;
+  }
+
+  if (state.currentUser.role === 'driver') {
+    elements.messagingSubtitle.textContent = "Contactez l'administration en direct.";
+  } else {
+    elements.messagingSubtitle.textContent = 'Répondez instantanément aux messages des chauffeurs.';
+  }
+}
+
+function updateMessagingBadge() {
+  if (!elements.messagingUnread) {
+    return;
+  }
+
+  if (state.messaging.unreadCount > 0) {
+    elements.messagingUnread.textContent = String(state.messaging.unreadCount);
+    elements.messagingUnread.classList.remove('hidden');
+  } else {
+    elements.messagingUnread.textContent = '0';
+    elements.messagingUnread.classList.add('hidden');
+  }
+}
+
+function updateMessagingAvailability() {
+  if (!elements.messagingFab || !elements.messagingPanel) {
+    return;
+  }
+
+  if (!state.currentUser) {
+    resetMessagingState();
+    return;
+  }
+
+  showElement(elements.messagingFab);
+  updateMessagingSubtitle();
+  refreshMessagingUnreadCount();
+}
+
+async function refreshMessagingUnreadCount() {
+  if (!state.currentUser) {
+    return;
+  }
+
+  try {
+    if (state.currentUser.role === 'driver') {
+      const data = await apiFetch(
+        `/messages/unread-count?role=driver&driverId=${encodeURIComponent(state.currentUser.id)}`
+      );
+      state.messaging.unreadCount = data?.total || 0;
+    } else {
+      const data = await apiFetch('/messages/unread-count?role=admin');
+      state.messaging.unreadCount = data?.total || 0;
+      state.messaging.threads = Array.isArray(data?.perDriver) ? data.perDriver : [];
+    }
+  } catch (error) {
+    console.warn('Impossible de récupérer le nombre de messages non lus', error);
+    state.messaging.unreadCount = 0;
+  }
+
+  updateMessagingBadge();
+}
+
+function renderMessagingThreads() {
+  if (!elements.messagingThreadList) {
+    return;
+  }
+
+  elements.messagingThreadList.innerHTML = '';
+
+  if (!state.messaging.threads.length) {
+    const empty = document.createElement('p');
+    empty.className = 'text-xs text-slate-500';
+    empty.textContent = 'Aucune conversation pour le moment';
+    elements.messagingThreadList.appendChild(empty);
+    return;
+  }
+
+  state.messaging.threads
+    .slice()
+    .sort((a, b) => new Date(b.lastMessageAt || 0) - new Date(a.lastMessageAt || 0))
+    .forEach((thread) => {
+      const item = document.createElement('div');
+      item.className = `messaging-thread${
+        thread.driverId === state.messaging.activeDriverId ? ' messaging-thread--active' : ''
+      }`;
+      item.setAttribute('data-driver-id', thread.driverId);
+
+      const name = document.createElement('div');
+      name.className = 'messaging-thread__name';
+      name.textContent = thread.driverName || `Chauffeur #${thread.driverId}`;
+      item.appendChild(name);
+
+      const meta = document.createElement('div');
+      meta.className = 'messaging-thread__meta';
+
+      const when = document.createElement('span');
+      when.textContent = thread.lastMessageAt
+        ? new Date(thread.lastMessageAt).toLocaleString('fr-FR', {
+            hour: '2-digit',
+            minute: '2-digit',
+            day: '2-digit',
+            month: 'short',
+          })
+        : '';
+      meta.appendChild(when);
+
+      if (thread.count || thread.unreadFromDriver) {
+        const badge = document.createElement('span');
+        badge.className = 'messaging-thread__badge';
+        badge.textContent = String(thread.count || thread.unreadFromDriver || 0);
+        meta.appendChild(badge);
+      }
+
+      item.appendChild(meta);
+      elements.messagingThreadList.appendChild(item);
+    });
+}
+
+function renderMessagingMessages() {
+  if (!elements.messagingMessages) {
+    return;
+  }
+
+  elements.messagingMessages.innerHTML = '';
+
+  if (!state.messaging.messages.length) {
+    const empty = document.createElement('p');
+    empty.className = 'text-sm text-slate-500 text-center';
+    empty.textContent = 'Envoyez un premier message pour démarrer la conversation.';
+    elements.messagingMessages.appendChild(empty);
+    return;
+  }
+
+  state.messaging.messages.forEach((message) => {
+    const container = document.createElement('div');
+    const isMine =
+      (state.currentUser?.role === 'driver' && message.senderType === 'driver') ||
+      (state.currentUser?.role === 'admin' && message.senderType === 'admin' &&
+        (!message.senderId || message.senderId === state.currentUser.id));
+    container.className = `messaging-message${isMine ? ' messaging-message--mine' : ''}`;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'messaging-message__avatar';
+    avatar.textContent = (message.senderInitials || '').slice(0, 3) || '??';
+    container.appendChild(avatar);
+
+    const bubble = document.createElement('div');
+    bubble.className = 'messaging-message__bubble';
+
+    const label = document.createElement('strong');
+    label.textContent = message.senderLabel || (message.senderType === 'driver' ? 'Chauffeur' : 'Admin');
+    bubble.appendChild(label);
+
+    const body = document.createElement('p');
+    body.textContent = message.body;
+    bubble.appendChild(body);
+
+    const meta = document.createElement('div');
+    meta.className = 'messaging-message__meta';
+    meta.textContent = new Date(message.createdAt).toLocaleString('fr-FR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      day: '2-digit',
+      month: 'short',
+    });
+    bubble.appendChild(meta);
+
+    container.appendChild(bubble);
+    elements.messagingMessages.appendChild(container);
+  });
+
+  elements.messagingMessages.scrollTop = elements.messagingMessages.scrollHeight;
+}
+
+async function markConversationAsRead(driverId, readerType) {
+  try {
+    await apiFetch(`/messages/${driverId}/read`, {
+      method: 'POST',
+      body: JSON.stringify({ readerType }),
+    });
+  } catch (error) {
+    console.warn('Impossible de marquer la conversation comme lue', error);
+  }
+}
+
+async function loadMessagingConversation(driverId, { markRead = true } = {}) {
+  if (!driverId) {
+    return;
+  }
+
+  state.messaging.loading = true;
+  renderMessagingMessages();
+
+  try {
+    const role = state.currentUser?.role === 'admin' ? 'admin' : 'driver';
+    const query = role === 'admin' ? 'role=admin' : `role=driver&driverId=${encodeURIComponent(driverId)}`;
+    const data = await apiFetch(`/messages/threads/${driverId}?${query}`);
+    const messages = Array.isArray(data?.messages) ? data.messages : [];
+    state.messaging.messages = messages;
+    renderMessagingMessages();
+
+    if (markRead) {
+      await markConversationAsRead(driverId, role);
+      await refreshMessagingUnreadCount();
+    }
+  } catch (error) {
+    console.error('Erreur lors du chargement de la conversation', error);
+    elements.messagingError.textContent = error.message || 'Impossible de charger les messages.';
+    elements.messagingError.classList.remove('hidden');
+  } finally {
+    state.messaging.loading = false;
+  }
+}
+
+async function loadMessagingInbox() {
+  try {
+    const inbox = await apiFetch('/messages/inbox');
+    state.messaging.threads = Array.isArray(inbox)
+      ? inbox.map((thread) => ({
+          driverId: thread.driverId,
+          driverName: thread.driverName,
+          lastMessageAt: thread.lastMessageAt,
+          count: thread.unreadFromDriver || thread.count || 0,
+        }))
+      : [];
+    renderMessagingThreads();
+  } catch (error) {
+    console.warn('Impossible de charger la liste des conversations', error);
+    state.messaging.threads = [];
+    renderMessagingThreads();
+  }
+}
+
+function populateMessagingDriverPicker() {
+  if (!elements.messagingDriverPicker) {
+    return;
+  }
+
+  if (state.currentUser?.role !== 'admin') {
+    elements.messagingDriverPicker.classList.add('hidden');
+    return;
+  }
+
+  elements.messagingDriverPicker.classList.remove('hidden');
+  elements.messagingDriverPicker.innerHTML = '<option value="">Choisir un chauffeur...</option>';
+
+  (state.adminDrivers || []).forEach((driver) => {
+    const option = document.createElement('option');
+    option.value = driver.id;
+    option.textContent = `${driver.firstName} ${driver.lastName}`;
+    if (driver.id === state.messaging.activeDriverId) {
+      option.selected = true;
+    }
+    elements.messagingDriverPicker.appendChild(option);
+  });
+}
+
+async function ensureAdminDriversForMessaging() {
+  if (state.currentUser?.role !== 'admin') {
+    return;
+  }
+
+  if (!state.adminDrivers.length) {
+    await loadAdminDrivers({ force: true });
+  }
+  populateMessagingDriverPicker();
+}
+
+async function openMessagingPanel() {
+  if (!state.currentUser) {
+    return;
+  }
+
+  state.messaging.isOpen = true;
+  elements.messagingError.classList.add('hidden');
+  elements.messagingMessages.innerHTML = '';
+  showElement(elements.messagingPanel);
+
+  if (state.currentUser.role === 'driver') {
+    elements.messagingThreadList?.classList.add('hidden');
+    elements.messagingDriverPicker?.classList.add('hidden');
+    state.messaging.activeDriverId = state.currentUser.id;
+    await loadMessagingConversation(state.messaging.activeDriverId);
+  } else {
+    elements.messagingThreadList?.classList.remove('hidden');
+    await ensureAdminDriversForMessaging();
+    await loadMessagingInbox();
+
+    if (!state.messaging.activeDriverId) {
+      if (state.messaging.threads.length) {
+        state.messaging.activeDriverId = state.messaging.threads[0].driverId;
+      } else if (state.adminDrivers.length) {
+        state.messaging.activeDriverId = state.adminDrivers[0].id;
+      }
+    }
+
+    populateMessagingDriverPicker();
+
+    if (state.messaging.activeDriverId) {
+      await loadMessagingConversation(state.messaging.activeDriverId);
+      if (elements.messagingDriverPicker) {
+        elements.messagingDriverPicker.value = String(state.messaging.activeDriverId);
+      }
+    } else {
+      renderMessagingMessages();
+    }
+  }
+
+  state.messaging.unreadCount = 0;
+  updateMessagingBadge();
+}
+
+function closeMessagingPanel() {
+  state.messaging.isOpen = false;
+  hideElement(elements.messagingPanel);
+}
+
+function toggleMessagingPanel() {
+  if (state.messaging.isOpen) {
+    closeMessagingPanel();
+  } else {
+    openMessagingPanel();
+  }
+}
+
+function selectMessagingThread(driverId) {
+  if (!driverId || state.messaging.activeDriverId === driverId) {
+    return;
+  }
+  state.messaging.activeDriverId = driverId;
+  renderMessagingThreads();
+  loadMessagingConversation(driverId);
+  if (elements.messagingDriverPicker) {
+    elements.messagingDriverPicker.value = String(driverId);
+  }
+}
+
+async function handleMessagingSubmit(event) {
+  event.preventDefault();
+
+  if (!state.currentUser) {
+    return;
+  }
+
+  const body = elements.messagingInput.value.trim();
+  if (!body) {
+    elements.messagingError.textContent = 'Le message ne peut pas être vide.';
+    elements.messagingError.classList.remove('hidden');
+    return;
+  }
+
+  if (!state.messaging.activeDriverId) {
+    elements.messagingError.textContent = "Sélectionnez un chauffeur avant d'envoyer un message.";
+    elements.messagingError.classList.remove('hidden');
+    return;
+  }
+
+  try {
+    elements.messagingError.classList.add('hidden');
+    state.messaging.sending = true;
+    const payload = {
+      driverId: state.messaging.activeDriverId,
+      body,
+      senderType: state.currentUser.role === 'admin' ? 'admin' : 'driver',
+    };
+    const message = await apiFetch('/messages', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+
+    elements.messagingInput.value = '';
+    if (Array.isArray(state.messaging.messages)) {
+      state.messaging.messages.push(message);
+    } else {
+      state.messaging.messages = [message];
+    }
+    renderMessagingMessages();
+    await refreshMessagingUnreadCount();
+  } catch (error) {
+    console.error("Erreur lors de l'envoi du message", error);
+    elements.messagingError.textContent = error.message || "Impossible d'envoyer le message.";
+    elements.messagingError.classList.remove('hidden');
+  } finally {
+    state.messaging.sending = false;
+  }
+}
+
+function handleMessagingDriverChange(event) {
+  const value = Number.parseInt(event.target.value, 10);
+  if (Number.isInteger(value)) {
+    selectMessagingThread(value);
+  }
+}
+
+function handleMessagingThreadClick(event) {
+  const target = event.target.closest('[data-driver-id]');
+  if (!target) {
+    return;
+  }
+  const driverId = Number.parseInt(target.getAttribute('data-driver-id'), 10);
+  if (Number.isInteger(driverId)) {
+    selectMessagingThread(driverId);
+  }
+}
+
+function processRealtimeMessage(payload) {
+  if (!payload || !payload.message || !payload.driverId || !state.currentUser) {
+    return;
+  }
+
+  const driverId = Number(payload.driverId);
+  const message = payload.message;
+  const senderType = payload.senderType;
+
+  const isDriver = state.currentUser.role === 'driver' && driverId === state.currentUser.id;
+  const isAdmin = state.currentUser.role === 'admin';
+
+  if (!isDriver && !isAdmin) {
+    return;
+  }
+
+  if (isDriver && senderType === 'driver') {
+    return;
+  }
+
+  if (isAdmin && senderType === 'admin' && message.senderId && message.senderId === state.currentUser.id) {
+    return;
+  }
+
+  const isCurrentConversation = state.messaging.isOpen && state.messaging.activeDriverId === driverId;
+  const alreadyPresent = state.messaging.messages.some((existing) => existing.id === message.id);
+
+  if (isCurrentConversation && !alreadyPresent) {
+    state.messaging.messages.push(message);
+    renderMessagingMessages();
+
+    if (isDriver && senderType === 'admin') {
+      markConversationAsRead(driverId, 'driver');
+      refreshMessagingUnreadCount();
+    }
+
+    if (isAdmin && senderType === 'driver') {
+      markConversationAsRead(driverId, 'admin');
+      refreshMessagingUnreadCount();
+    }
+  } else if (!alreadyPresent) {
+    refreshMessagingUnreadCount();
+  }
+
+  if (isAdmin) {
+    const existing = state.messaging.threads.find((thread) => thread.driverId === driverId);
+    if (existing) {
+      existing.lastMessageAt = message.createdAt;
+      if (senderType === 'driver') {
+        existing.count = (existing.count || 0) + 1;
+      }
+    } else {
+      state.messaging.threads.push({
+        driverId,
+        driverName: message.senderLabel || `Chauffeur #${driverId}`,
+        lastMessageAt: message.createdAt,
+        count: senderType === 'driver' ? 1 : 0,
+      });
+    }
+    renderMessagingThreads();
+  }
+}
+
+function processMessageReadEvent(payload) {
+  if (!payload || !state.currentUser) {
+    return;
+  }
+
+  if (state.currentUser.role === 'driver') {
+    if (Number(payload.driverId) === state.currentUser.id && payload.readerType === 'driver') {
+      refreshMessagingUnreadCount();
+    }
+  } else if (state.currentUser.role === 'admin' && payload.readerType === 'admin') {
+    refreshMessagingUnreadCount();
+    if (state.messaging.threads.length) {
+      state.messaging.threads = state.messaging.threads.map((thread) =>
+        thread.driverId === Number(payload.driverId) ? { ...thread, count: 0 } : thread
+      );
+      renderMessagingThreads();
+    }
+  }
 }
 
 function capturePhoto() {
@@ -2898,6 +3632,12 @@ function handleRealtimeEvent(event) {
         loadEmailRecipient();
       }
       break;
+    case 'messages:new':
+      processRealtimeMessage(payload);
+      break;
+    case 'messages:read':
+      processMessageReadEvent(payload);
+      break;
     default:
       break;
   }
@@ -3034,6 +3774,14 @@ function registerEventListeners() {
   elements.captureBtn.addEventListener('click', capturePhoto);
   elements.confirmPhotoBtn.addEventListener('click', confirmPhoto);
   elements.retakePhotoBtn.addEventListener('click', retakePhoto);
+  elements.courseIssueForm?.addEventListener('submit', handleCourseIssueSubmit);
+  elements.courseIssueCancel?.addEventListener('click', closeCourseIssueModal);
+  elements.courseIssueClose?.addEventListener('click', closeCourseIssueModal);
+  elements.messagingToggle?.addEventListener('click', toggleMessagingPanel);
+  elements.messagingClose?.addEventListener('click', closeMessagingPanel);
+  elements.messagingForm?.addEventListener('submit', handleMessagingSubmit);
+  elements.messagingDriverPicker?.addEventListener('change', handleMessagingDriverChange);
+  elements.messagingThreadList?.addEventListener('click', handleMessagingThreadClick);
   elements.adminDriverSelect.addEventListener('change', () => {
     state.adminFilters.driverId = elements.adminDriverSelect.value || 'all';
     if (state.isAdmin) {
@@ -3124,6 +3872,12 @@ function registerEventListeners() {
     if (event.target === elements.driverPasswordModal) {
       closeDriverPasswordModal();
     }
+    if (event.target === elements.courseIssueModal) {
+      closeCourseIssueModal();
+    }
+    if (event.target === elements.messagingPanel) {
+      closeMessagingPanel();
+    }
   });
 }
 
@@ -3135,6 +3889,7 @@ function init() {
   renderSettingsTabs();
   registerEventListeners();
   setupRealtimeUpdates();
+  resetMessagingState();
   restoreSessionFromStorage();
 }
 
