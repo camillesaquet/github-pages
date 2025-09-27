@@ -203,6 +203,27 @@
           </button>
         </div>
 
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-medium text-gray-600">Affichage</span>
+            <div class="flex gap-2">
+              <button type="button" class="filter-chip" data-driver-layout="cards">
+                <i class="fas fa-th-large mr-1"></i> Cartes
+              </button>
+              <button type="button" class="filter-chip" data-driver-layout="list">
+                <i class="fas fa-list mr-1"></i> Liste
+              </button>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-medium text-gray-600">Lisibilité</span>
+            <div class="flex gap-2">
+              <button type="button" class="filter-chip" data-driver-density="comfortable">Standard</button>
+              <button type="button" class="filter-chip" data-driver-density="contrast">Contraste</button>
+            </div>
+          </div>
+        </div>
+
         <div id="today-courses">
           <h2 class="section-title">Vos courses aujourd'hui</h2>
           <div id="today-list" class="space-y-3"></div>
@@ -352,23 +373,94 @@
           </section>
 
           <section class="bg-white p-4 rounded-lg shadow-sm space-y-4">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+            <div class="grid grid-cols-1 xl:grid-cols-4 gap-4">
               <div>
-                <label class="form-label" for="admin-driver-select">Filtrer par chauffeur</label>
+                <label class="form-label" for="admin-driver-select">Chauffeur</label>
                 <select id="admin-driver-select" class="form-input">
                   <option value="all">Tous les chauffeurs</option>
                 </select>
               </div>
               <div>
+                <label class="form-label" for="admin-status-filter">Statut</label>
+                <select id="admin-status-filter" class="form-input">
+                  <option value="all">Tous les statuts</option>
+                  <option value="pending">À faire</option>
+                  <option value="completed">Terminées</option>
+                  <option value="issue_reported">Signalements</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label" for="admin-merchandise-filter">Marchandise</label>
+                <select id="admin-merchandise-filter" class="form-input">
+                  <option value="all">Toutes</option>
+                  <option value="Céréales">Céréales</option>
+                  <option value="Légumes">Légumes</option>
+                  <option value="Fruits">Fruits</option>
+                  <option value="Engrais">Engrais</option>
+                  <option value="Autre">Autre</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label" for="admin-search-filter">Recherche</label>
+                <input
+                  type="search"
+                  id="admin-search-filter"
+                  class="form-input"
+                  placeholder="Départ, destination, commentaire..."
+                />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-4 gap-4 items-end">
+              <div>
                 <span class="form-label">Période</span>
                 <div class="flex flex-wrap gap-2 mt-2">
                   <button type="button" class="filter-chip" data-admin-range="day">Aujourd'hui</button>
                   <button type="button" class="filter-chip" data-admin-range="week">7 jours</button>
+                  <button type="button" class="filter-chip" data-admin-range="month">30 jours</button>
+                  <button type="button" class="filter-chip" data-admin-range="custom">Personnalisé</button>
                   <button type="button" class="filter-chip" data-admin-range="all">Tout afficher</button>
                 </div>
               </div>
-              <div class="flex md:justify-end">
-                <button id="new-course-admin" class="btn-admin w-full md:w-auto">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label class="form-label" for="admin-from">Du</label>
+                  <input type="date" id="admin-from" class="form-input" />
+                </div>
+                <div>
+                  <label class="form-label" for="admin-to">Au</label>
+                  <input type="date" id="admin-to" class="form-input" />
+                </div>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label class="form-label" for="admin-issue-filter">Problèmes</label>
+                  <select id="admin-issue-filter" class="form-input">
+                    <option value="all">Toutes les courses</option>
+                    <option value="issues">Uniquement les signalements</option>
+                    <option value="clear">Aucun problème</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label" for="admin-photo-filter">Photos</label>
+                  <select id="admin-photo-filter" class="form-input">
+                    <option value="all">Toutes</option>
+                    <option value="with">Avec photo</option>
+                    <option value="without">Sans photo</option>
+                  </select>
+                </div>
+              </div>
+              <div class="flex flex-wrap gap-2 justify-end">
+                <button id="admin-reset-filters" class="btn-tertiary text-sm">
+                  <i class="fas fa-undo mr-1"></i> Réinitialiser
+                </button>
+                <button id="admin-export-pdf" class="btn-secondary text-sm">
+                  <i class="fas fa-file-pdf mr-1"></i> Export PDF
+                </button>
+                <button id="admin-export-excel" class="btn-secondary text-sm">
+                  <i class="fas fa-file-excel mr-1"></i> Export Excel
+                </button>
+                <button id="new-course-admin" class="btn-admin">
                   <i class="fas fa-plus mr-1"></i> Nouvelle course
                 </button>
               </div>
@@ -376,8 +468,31 @@
           </section>
 
           <section>
-            <h2 class="section-title">Planning des courses</h2>
-            <div class="overflow-x-auto">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <h2 class="section-title mb-0">Planning des courses</h2>
+              <div class="flex flex-wrap gap-4 items-center">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium text-gray-600">Affichage</span>
+                  <div class="flex gap-2">
+                    <button type="button" class="filter-chip" data-admin-layout="table">
+                      <i class="fas fa-table mr-1"></i> Tableau
+                    </button>
+                    <button type="button" class="filter-chip" data-admin-layout="cards">
+                      <i class="fas fa-layer-group mr-1"></i> Cartes
+                    </button>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium text-gray-600">Lisibilité</span>
+                  <div class="flex gap-2">
+                    <button type="button" class="filter-chip" data-admin-density="comfortable">Standard</button>
+                    <button type="button" class="filter-chip" data-admin-density="contrast">Contraste</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="admin-table-wrapper" class="overflow-x-auto">
               <table class="responsive-table min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
                   <tr>
@@ -393,6 +508,7 @@
                 <tbody id="admin-week-list" class="bg-white divide-y divide-gray-200"></tbody>
               </table>
             </div>
+            <div id="admin-card-list" class="grid gap-4 hidden"></div>
             <div id="no-courses-admin" class="empty-state hidden">
               <i class="fas fa-calendar-week text-4xl mb-3 opacity-30"></i>
               <p>Aucune course prévue</p>
@@ -454,6 +570,14 @@
                   <input type="date" id="archive-to" class="form-input" />
                 </div>
               </div>
+            </div>
+            <div class="flex flex-wrap gap-2 justify-end">
+              <button id="archive-export-pdf" class="btn-secondary text-sm">
+                <i class="fas fa-file-pdf mr-1"></i> Export PDF
+              </button>
+              <button id="archive-export-excel" class="btn-secondary text-sm">
+                <i class="fas fa-file-excel mr-1"></i> Export Excel
+              </button>
             </div>
           </section>
 
@@ -633,6 +757,21 @@
             </button>
           </div>
           <div class="mb-4">
+            <div class="flex flex-wrap items-center justify-between mb-3 gap-2">
+              <div class="flex items-center gap-2 text-sm text-gray-600">
+                <i class="fas fa-sync-alt text-gray-400"></i>
+                <span>Sélectionner la caméra</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button id="switch-camera" type="button" class="btn-tertiary text-sm">
+                  <i class="fas fa-exchange-alt mr-2"></i> Inverser
+                </button>
+                <select id="camera-facing-select" class="form-input text-sm w-40">
+                  <option value="environment">Caméra arrière</option>
+                  <option value="user">Caméra avant</option>
+                </select>
+              </div>
+            </div>
             <div class="bg-gray-100 rounded-md h-64 flex items-center justify-center mb-3">
               <video id="camera" class="w-full h-full object-cover rounded-md hidden" playsinline></video>
               <canvas id="canvas" class="hidden"></canvas>

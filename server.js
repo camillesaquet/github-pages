@@ -7,6 +7,8 @@ const sqlite3 = require('sqlite3').verbose();
 const { open } = require('sqlite');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const PDFDocument = require('pdfkit');
+const ExcelJS = require('exceljs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -97,9 +99,215 @@ const EMAIL_ATTACHMENT_NAME = 'bon-transport.jpg';
 const COURSE_STATUS_PENDING = 'pending';
 const COURSE_STATUS_COMPLETED = 'completed';
 const COURSE_STATUS_ISSUE_REPORTED = 'issue_reported';
+const COURSE_STATUSES = new Set([
+  COURSE_STATUS_PENDING,
+  COURSE_STATUS_COMPLETED,
+  COURSE_STATUS_ISSUE_REPORTED,
+]);
 
 const activeAdminSessions = new Map();
 const sseClients = new Set();
+
+function parseBoolean(value) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+    if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) {
+      return true;
+    }
+    if (['false', '0', 'no', 'n', 'off'].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+function normalizeArrayParam(value) {
+  if (!value && value !== 0) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === 'string' ? item.trim() : String(item)))
+      .filter(Boolean);
+  }
+  return String(value)
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function mapCourseRow(row, options = {}) {
+  const { includePhotoPath = false } = options;
+
+  const mapped = {
+    id: row.id,
+    driverId: row.driver_id,
+    driverName:
+      row.first_name && row.last_name
+        ? `${row.first_name} ${row.last_name}`
+        : row.first_name || row.last_name || null,
+    dateTime: row.date_time,
+    departure: row.departure,
+    destination: row.destination,
+    merchandise: row.merchandise,
+    comments: row.comments,
+    status: row.status,
+    issueReportedAt: row.issue_reported_at,
+    issueReportComment: row.issue_report_comment,
+    issueReportedBy: row.issue_reported_by,
+    photoUrl: row.photo_path ? `/storage/attachments/${path.basename(row.photo_path)}` : null,
+    completionComments: row.completion_comments,
+    archivedAt: row.archived_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+
+  if (includePhotoPath) {
+    mapped.photoPath = row.photo_path || null;
+  }
+
+  return mapped;
+}
+
+function buildCourseQuery(filters = {}) {
+  const conditions = [];
+  const params = [];
+
+  if (filters.id) {
+    conditions.push('c.id = ?');
+    params.push(filters.id);
+  }
+
+  if (filters.driverId) {
+    conditions.push('c.driver_id = ?');
+    params.push(filters.driverId);
+  }
+
+  if (filters.driverIds && filters.driverIds.length) {
+    const placeholders = filters.driverIds.map(() => '?').join(',');
+    conditions.push(`c.driver_id IN (${placeholders})`);
+    params.push(...filters.driverIds);
+  }
+
+  if (filters.archived === 'true') {
+    conditions.push('c.archived_at IS NOT NULL');
+  } else if (filters.archived === 'false') {
+    conditions.push('c.archived_at IS NULL');
+  } else if (!filters.archived || filters.archived === 'pending') {
+    conditions.push('c.archived_at IS NULL');
+  }
+
+  if (filters.from) {
+    const fromDate = new Date(filters.from);
+    if (!Number.isNaN(fromDate.getTime())) {
+      conditions.push('c.date_time >= ?');
+      params.push(fromDate.toISOString());
+    }
+  }
+
+  if (filters.to) {
+    const toDate = new Date(filters.to);
+    if (!Number.isNaN(toDate.getTime())) {
+      conditions.push('c.date_time <= ?');
+      params.push(toDate.toISOString());
+    }
+  }
+
+  if (filters.status) {
+    const statuses = normalizeArrayParam(filters.status).filter((status) => COURSE_STATUSES.has(status));
+    if (statuses.length === 1) {
+      conditions.push('c.status = ?');
+      params.push(statuses[0]);
+    } else if (statuses.length > 1) {
+      const placeholders = statuses.map(() => '?').join(',');
+      conditions.push(`c.status IN (${placeholders})`);
+      params.push(...statuses);
+    }
+  }
+
+  if (filters.merchandise) {
+    const merchValues = normalizeArrayParam(filters.merchandise);
+    if (merchValues.length === 1) {
+      conditions.push('LOWER(c.merchandise) = LOWER(?)');
+      params.push(merchValues[0]);
+    } else if (merchValues.length > 1) {
+      const placeholders = merchValues.map(() => '?').join(',');
+      conditions.push(`LOWER(c.merchandise) IN (${placeholders})`);
+      params.push(...merchValues.map((value) => value.toLowerCase()));
+    }
+  }
+
+  if (filters.issue === 'reported') {
+    conditions.push('(c.status = ? OR c.issue_reported_at IS NOT NULL)');
+    params.push(COURSE_STATUS_ISSUE_REPORTED);
+  } else if (filters.issue === 'none') {
+    conditions.push('(c.status <> ? AND c.issue_reported_at IS NULL)');
+    params.push(COURSE_STATUS_ISSUE_REPORTED);
+  }
+
+  if (filters.hasPhoto !== undefined) {
+    const hasPhoto = parseBoolean(filters.hasPhoto);
+    if (hasPhoto) {
+      conditions.push('c.photo_path IS NOT NULL');
+    } else {
+      conditions.push('c.photo_path IS NULL');
+    }
+  }
+
+  if (filters.hasComments !== undefined) {
+    const hasComments = parseBoolean(filters.hasComments);
+    if (hasComments) {
+      conditions.push("(c.comments IS NOT NULL AND TRIM(c.comments) <> '')");
+    } else {
+      conditions.push("(c.comments IS NULL OR TRIM(c.comments) = '')");
+    }
+  }
+
+  if (filters.search) {
+    const term = `%${String(filters.search).trim().toLowerCase()}%`;
+    const searchConditions = [
+      'LOWER(c.departure) LIKE ?',
+      'LOWER(c.destination) LIKE ?',
+      'LOWER(c.merchandise) LIKE ?',
+      'LOWER(c.comments) LIKE ?',
+      'LOWER(d.first_name || " " || d.last_name) LIKE ?',
+    ];
+    conditions.push(`(${searchConditions.join(' OR ')})`);
+    params.push(term, term, term, term, term);
+  }
+
+  let query = `SELECT c.*, d.first_name, d.last_name FROM courses c
+    LEFT JOIN drivers d ON d.id = c.driver_id`;
+
+  if (conditions.length) {
+    query += ' WHERE ' + conditions.join(' AND ');
+  }
+
+  const orderDirection = filters.order === 'desc' ? 'DESC' : 'ASC';
+  query += ` ORDER BY c.date_time ${orderDirection}`;
+
+  return { query, params };
+}
+
+async function fetchCoursesWithFilters(filters = {}, options = {}) {
+  const { query, params } = buildCourseQuery(filters);
+  if (options.single) {
+    return db.get(query, params);
+  }
+  return db.all(query, params);
+}
 
 function generateAdminSessionToken() {
   return crypto.randomBytes(32).toString('hex');
@@ -1817,107 +2025,180 @@ app.delete('/api/drivers/:id/password', async (req, res) => {
 
 app.get('/api/courses', async (req, res) => {
   try {
-    const { driverId, from, to, archived } = req.query;
-    const conditions = [];
-    const params = [];
-
-    if (driverId) {
-      conditions.push('driver_id = ?');
-      params.push(driverId);
-    }
-
-    if (archived === 'true') {
-      conditions.push('archived_at IS NOT NULL');
-    } else if (archived !== 'all') {
-      conditions.push('archived_at IS NULL');
-    }
-
-    if (from) {
-      conditions.push('date_time >= ?');
-      params.push(new Date(from).toISOString());
-    }
-
-    if (to) {
-      conditions.push('date_time <= ?');
-      params.push(new Date(to).toISOString());
-    }
-
-    let query = `SELECT c.*, d.first_name, d.last_name FROM courses c
-      LEFT JOIN drivers d ON d.id = c.driver_id`;
-
-    if (conditions.length) {
-      query += ' WHERE ' + conditions.join(' AND ');
-    }
-
-    query += ' ORDER BY date_time ASC';
-
-    const rows = await db.all(query, params);
-    res.json(
-      rows.map((row) => ({
-        id: row.id,
-        driverId: row.driver_id,
-        driverName:
-          row.first_name && row.last_name
-            ? `${row.first_name} ${row.last_name}`
-            : row.first_name || row.last_name || null,
-        dateTime: row.date_time,
-        departure: row.departure,
-        destination: row.destination,
-        merchandise: row.merchandise,
-        comments: row.comments,
-        status: row.status,
-        issueReportedAt: row.issue_reported_at,
-        issueReportComment: row.issue_report_comment,
-        issueReportedBy: row.issue_reported_by,
-        photoUrl: row.photo_path ? `/storage/attachments/${path.basename(row.photo_path)}` : null,
-        completionComments: row.completion_comments,
-        archivedAt: row.archived_at,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      }))
-    );
+    const rows = await fetchCoursesWithFilters(req.query);
+    res.json(rows.map((row) => mapCourseRow(row)));
   } catch (error) {
     console.error('Error fetching courses', error);
     res.status(500).json({ message: 'Erreur lors de la récupération des courses' });
   }
 });
 
+app.get('/api/courses/export', async (req, res) => {
+  try {
+    const { format: requestedFormat, ...rawFilters } = req.query;
+    const format = (requestedFormat || 'pdf').toString().toLowerCase();
+
+    if (!['pdf', 'xlsx'].includes(format)) {
+      return res.status(400).json({ message: "Format d'export non supporté." });
+    }
+
+    const filters = { ...rawFilters, order: 'asc' };
+    const rows = await fetchCoursesWithFilters(filters);
+    const courses = rows.map((row) => mapCourseRow(row, { includePhotoPath: true }));
+
+    if (!courses.length) {
+      return res.status(404).json({ message: 'Aucune course trouvée pour les filtres sélectionnés.' });
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const baseName = `export-courses-${timestamp}`;
+
+    if (format === 'pdf') {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${baseName}.pdf"`);
+
+      const doc = new PDFDocument({ margin: 40, size: 'A4' });
+      doc.pipe(res);
+
+      doc.fontSize(18).text('Export des courses filtrées', { align: 'center' });
+      doc.moveDown();
+      doc.fontSize(12).text(`Total des courses : ${courses.length}`);
+      doc.moveDown();
+
+      courses.forEach((course, index) => {
+        doc.fontSize(14).fillColor('#111111').text(`Course #${course.id}`, { continued: false });
+        doc.moveDown(0.2);
+        doc.fontSize(11).fillColor('#333333');
+        doc.text(`Chauffeur : ${course.driverName || '—'}`);
+        const courseDate = new Date(course.dateTime);
+        doc.text(
+          `Date : ${courseDate.toLocaleDateString('fr-FR')} ${courseDate.toLocaleTimeString('fr-FR', {
+            hour: '2-digit',
+            minute: '2-digit',
+          })}`
+        );
+        doc.text(`Trajet : ${course.departure || '—'} → ${course.destination || '—'}`);
+        doc.text(`Marchandise : ${course.merchandise || '—'}`);
+        doc.text(`Statut : ${course.status || '—'}`);
+        if (course.comments) {
+          doc.text(`Commentaire : ${course.comments}`);
+        }
+        if (course.completionComments) {
+          doc.text(`Commentaire de clôture : ${course.completionComments}`);
+        }
+        if (course.issueReportComment) {
+          doc.text(`Problème signalé : ${course.issueReportComment}`);
+        }
+
+        if (course.photoPath && fs.existsSync(course.photoPath)) {
+          try {
+            doc.moveDown(0.3);
+            doc.text('Photo du bon de livraison :');
+            doc.moveDown(0.3);
+            doc.image(course.photoPath, {
+              fit: [430, 320],
+              align: 'left',
+            });
+          } catch (error) {
+            console.warn(`Impossible d\'ajouter la photo pour la course ${course.id}`, error.message);
+            doc.text('Photo indisponible (erreur de lecture).');
+          }
+        }
+
+        if (index < courses.length - 1) {
+          doc.moveDown();
+          doc.addPage();
+        }
+      });
+
+      doc.end();
+      return;
+    }
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${baseName}.xlsx"`);
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Agri Holann';
+    workbook.created = new Date();
+    const worksheet = workbook.addWorksheet('Courses');
+
+    worksheet.columns = [
+      { header: 'ID', key: 'id', width: 10 },
+      { header: 'Chauffeur', key: 'driverName', width: 25 },
+      { header: 'Date', key: 'date', width: 15 },
+      { header: 'Heure', key: 'time', width: 10 },
+      { header: 'Départ', key: 'departure', width: 20 },
+      { header: 'Destination', key: 'destination', width: 20 },
+      { header: 'Marchandise', key: 'merchandise', width: 20 },
+      { header: 'Statut', key: 'status', width: 16 },
+      { header: 'Commentaire', key: 'comments', width: 30 },
+      { header: 'Clôture', key: 'completionComments', width: 30 },
+      { header: 'Problème signalé', key: 'issueReportComment', width: 30 },
+      { header: 'Photo', key: 'photo', width: 18 },
+    ];
+
+    for (const course of courses) {
+      const date = new Date(course.dateTime);
+      const row = worksheet.addRow({
+        id: course.id,
+        driverName: course.driverName || '—',
+        date: date.toLocaleDateString('fr-FR'),
+        time: date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        departure: course.departure || '—',
+        destination: course.destination || '—',
+        merchandise: course.merchandise || '—',
+        status: course.status || '—',
+        comments: course.comments || '',
+        completionComments: course.completionComments || '',
+        issueReportComment: course.issueReportComment || '',
+      });
+
+      row.alignment = { vertical: 'top', wrapText: true };
+
+      if (course.photoPath && fs.existsSync(course.photoPath)) {
+        try {
+          const imageBuffer = await fs.promises.readFile(course.photoPath);
+          const extension = path.extname(course.photoPath).replace('.', '').toLowerCase() || 'jpg';
+          const imageId = workbook.addImage({
+            buffer: imageBuffer,
+            extension,
+          });
+
+          const rowIndex = row.number - 1; // zero-based for ExcelJS image positioning
+          worksheet.addImage(imageId, {
+            tl: { col: 11, row: rowIndex },
+            ext: { width: 160, height: 120 },
+            editAs: 'oneCell',
+          });
+          row.height = Math.max(row.height || 20, 95);
+        } catch (error) {
+          console.warn(`Impossible d\'embarquer la photo pour la course ${course.id}`, error.message);
+        }
+      }
+    }
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error("Erreur lors de la génération de l'export", error);
+    if (!res.headersSent) {
+      res.status(500).json({ message: "Erreur lors de la génération de l'export" });
+    } else {
+      res.end();
+    }
+  }
+});
+
 app.get('/api/courses/:id', async (req, res) => {
   try {
-    const row = await db.get(
-      `SELECT c.*, d.first_name, d.last_name
-       FROM courses c
-       LEFT JOIN drivers d ON d.id = c.driver_id
-       WHERE c.id = ?`,
-      [req.params.id]
-    );
+    const row = await fetchCoursesWithFilters({ id: req.params.id }, { single: true });
 
     if (!row) {
       return res.status(404).json({ message: 'Course introuvable' });
     }
 
-    res.json({
-      id: row.id,
-      driverId: row.driver_id,
-      driverName:
-        row.first_name && row.last_name
-          ? `${row.first_name} ${row.last_name}`
-          : row.first_name || row.last_name || null,
-      dateTime: row.date_time,
-      departure: row.departure,
-      destination: row.destination,
-      merchandise: row.merchandise,
-      comments: row.comments,
-      status: row.status,
-      issueReportedAt: row.issue_reported_at,
-      issueReportComment: row.issue_report_comment,
-      issueReportedBy: row.issue_reported_by,
-      photoUrl: row.photo_path ? `/storage/attachments/${path.basename(row.photo_path)}` : null,
-      completionComments: row.completion_comments,
-      archivedAt: row.archived_at,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    });
+    res.json(mapCourseRow(row));
   } catch (error) {
     console.error('Error fetching course', error);
     res.status(500).json({ message: 'Erreur lors de la récupération de la course' });

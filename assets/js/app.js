@@ -9,6 +9,26 @@ const ADMIN_EDIT_DEFAULT = Object.freeze({
   saving: false,
 });
 
+const DEFAULT_ADMIN_FILTERS = Object.freeze({
+  driverId: 'all',
+  range: 'week',
+  status: 'all',
+  merchandise: 'all',
+  issue: 'all',
+  hasPhoto: 'all',
+  search: '',
+  from: null,
+  to: null,
+});
+
+const DEFAULT_ARCHIVE_FILTERS = Object.freeze({
+  driverId: 'all',
+  merchandise: 'all',
+  period: 'week',
+  from: null,
+  to: null,
+});
+
 const state = {
   driverSearchResults: [],
   adminDrivers: [],
@@ -20,17 +40,8 @@ const state = {
   currentUser: null,
   isAdmin: false,
   admins: [],
-  adminFilters: {
-    driverId: 'all',
-    range: 'week',
-  },
-  archiveFilters: {
-    driverId: 'all',
-    merchandise: 'all',
-    period: 'week',
-    from: null,
-    to: null,
-  },
+  adminFilters: { ...DEFAULT_ADMIN_FILTERS },
+  archiveFilters: { ...DEFAULT_ARCHIVE_FILTERS },
   adminView: 'planning',
   currentCourseId: null,
   photoDataUrl: null,
@@ -38,6 +49,7 @@ const state = {
   pendingDriverLogin: null,
   driverPasswordError: '',
   activeDriverTab: 'today',
+  cameraFacingMode: 'environment',
   driverManagement: {
     expanded: false,
     loading: false,
@@ -69,7 +81,15 @@ const state = {
   },
   adminManagementView: 'list',
   adminEdit: { ...ADMIN_EDIT_DEFAULT },
+  displayPreferences: {
+    driverLayout: 'cards',
+    driverDensity: 'comfortable',
+    adminLayout: 'table',
+    adminDensity: 'comfortable',
+  },
 };
+
+let adminSearchTimer = null;
 
 const elements = {
   loginPage: document.getElementById('login-page'),
@@ -95,11 +115,23 @@ const elements = {
   weekList: document.getElementById('week-list'),
   adminDriverSelect: document.getElementById('admin-driver-select'),
   adminWeekList: document.getElementById('admin-week-list'),
+  adminTableWrapper: document.getElementById('admin-table-wrapper'),
+  adminCardList: document.getElementById('admin-card-list'),
   noCoursesAdmin: document.getElementById('no-courses-admin'),
   activityLogList: document.getElementById('activity-log'),
   noActivity: document.getElementById('no-activity'),
   newCourseAdminBtn: document.getElementById('new-course-admin'),
   adminRangeButtons: document.querySelectorAll('[data-admin-range]'),
+  adminStatusFilter: document.getElementById('admin-status-filter'),
+  adminMerchandiseFilter: document.getElementById('admin-merchandise-filter'),
+  adminSearchFilter: document.getElementById('admin-search-filter'),
+  adminIssueFilter: document.getElementById('admin-issue-filter'),
+  adminPhotoFilter: document.getElementById('admin-photo-filter'),
+  adminFromInput: document.getElementById('admin-from'),
+  adminToInput: document.getElementById('admin-to'),
+  adminResetFiltersBtn: document.getElementById('admin-reset-filters'),
+  adminExportPdfBtn: document.getElementById('admin-export-pdf'),
+  adminExportExcelBtn: document.getElementById('admin-export-excel'),
   addCourseForm: document.getElementById('add-course-form'),
   adminDriverField: document.getElementById('admin-driver-field'),
   adminDriverPicker: document.getElementById('admin-driver-picker'),
@@ -125,6 +157,8 @@ const elements = {
   captureBtn: document.getElementById('capture-btn'),
   confirmPhotoBtn: document.getElementById('confirm-photo'),
   retakePhotoBtn: document.getElementById('retake-photo'),
+  switchCameraBtn: document.getElementById('switch-camera'),
+  cameraFacingSelect: document.getElementById('camera-facing-select'),
   courseEditorModal: document.getElementById('course-editor-modal'),
   courseEditorTitle: document.getElementById('course-editor-title'),
   courseEditorForm: document.getElementById('course-editor-form'),
@@ -208,6 +242,12 @@ const elements = {
   adminPasswordCurrent: document.getElementById('admin-password-current'),
   adminPasswordNew: document.getElementById('admin-password-new'),
   adminPasswordFeedback: document.getElementById('admin-password-feedback'),
+  driverLayoutButtons: document.querySelectorAll('[data-driver-layout]'),
+  driverDensityButtons: document.querySelectorAll('[data-driver-density]'),
+  adminLayoutButtons: document.querySelectorAll('[data-admin-layout]'),
+  adminDensityButtons: document.querySelectorAll('[data-admin-density]'),
+  archiveExportPdfBtn: document.getElementById('archive-export-pdf'),
+  archiveExportExcelBtn: document.getElementById('archive-export-excel'),
 };
 
 let eventSource = null;
@@ -402,6 +442,38 @@ function computeAdminIdentifier(firstName, lastName) {
   return `${trimmedFirst.charAt(0)}${trimmedLast}`.toLowerCase();
 }
 
+function applyDisplayPreferences() {
+  if (elements.driverDashboard) {
+    elements.driverDashboard.dataset.courseLayout = state.displayPreferences.driverLayout;
+    elements.driverDashboard.dataset.courseDensity = state.displayPreferences.driverDensity;
+  }
+
+  if (elements.adminDashboard) {
+    elements.adminDashboard.dataset.courseLayout = state.displayPreferences.adminLayout;
+    elements.adminDashboard.dataset.courseDensity = state.displayPreferences.adminDensity;
+  }
+
+  elements.driverLayoutButtons?.forEach((button) => {
+    const isActive = button.dataset.driverLayout === state.displayPreferences.driverLayout;
+    button.classList.toggle('filter-chip--active', isActive);
+  });
+
+  elements.driverDensityButtons?.forEach((button) => {
+    const isActive = button.dataset.driverDensity === state.displayPreferences.driverDensity;
+    button.classList.toggle('filter-chip--active', isActive);
+  });
+
+  elements.adminLayoutButtons?.forEach((button) => {
+    const isActive = button.dataset.adminLayout === state.displayPreferences.adminLayout;
+    button.classList.toggle('filter-chip--active', isActive);
+  });
+
+  elements.adminDensityButtons?.forEach((button) => {
+    const isActive = button.dataset.adminDensity === state.displayPreferences.adminDensity;
+    button.classList.toggle('filter-chip--active', isActive);
+  });
+}
+
 function formatAdminLevel(role) {
   if (role === 'superadmin') {
     return 'Super admin';
@@ -468,7 +540,7 @@ function renderDriverList(drivers) {
 }
 
 async function loginAsDriver(driver, options = {}) {
-  const { skipPasswordCheck = false, initialTab = 'today' } = options;
+  const { skipPasswordCheck = false, initialTab = 'today', displayPreferences = null } = options;
   const normalizedDriver = normalizeDriver(driver);
 
   if (!skipPasswordCheck && normalizedDriver.hasPassword) {
@@ -490,6 +562,13 @@ async function loginAsDriver(driver, options = {}) {
   hideElement(elements.adminDashboard);
   closeDriverPasswordModal();
   state.activeDriverTab = initialTab;
+  if (displayPreferences) {
+    state.displayPreferences = {
+      ...state.displayPreferences,
+      ...displayPreferences,
+    };
+  }
+  applyDisplayPreferences();
   switchTab(initialTab);
   await loadDriverCourses();
   updateMessagingAvailability();
@@ -596,11 +675,13 @@ async function handleDriverPasswordPrompt(password) {
 
 function setAdminSession(admin, options = {}) {
   const normalized = normalizeAdmin(admin);
-  const defaultAdminFilters = { driverId: 'all', range: 'week' };
-  const defaultArchiveFilters = { driverId: 'all', merchandise: 'all', period: 'week', from: null, to: null };
   const view = options.view || options.adminView || 'planning';
   const driverTab = options.driverTab || options.activeDriverTab || 'week';
   const settingsTab = options.settingsTab || 'email';
+  const displayPreferences = {
+    ...state.displayPreferences,
+    ...(options.displayPreferences || {}),
+  };
 
   state.currentUser = {
     ...normalized,
@@ -609,8 +690,9 @@ function setAdminSession(admin, options = {}) {
     token: admin.token || state.currentUser?.token || null,
   };
   state.isAdmin = true;
-  state.adminFilters = { ...defaultAdminFilters, ...(options.adminFilters || {}) };
-  state.archiveFilters = { ...defaultArchiveFilters, ...(options.archiveFilters || {}) };
+  state.adminFilters = { ...DEFAULT_ADMIN_FILTERS, ...(options.adminFilters || {}) };
+  state.archiveFilters = { ...DEFAULT_ARCHIVE_FILTERS, ...(options.archiveFilters || {}) };
+  state.displayPreferences = displayPreferences;
   state.settings = {
     emailRecipient: '',
     loaded: false,
@@ -630,6 +712,9 @@ function setAdminSession(admin, options = {}) {
   hideElement(elements.driverDashboard);
   showElement(elements.adminDashboard);
   closeAdminLoginModal();
+
+  applyDisplayPreferences();
+  syncAdminFiltersToInputs();
 
   if (elements.adminIdentifierDisplay) {
     const levelLabel =
@@ -1307,6 +1392,7 @@ function updateAdminRangeButtons() {
       button.classList.remove('filter-chip--active');
     }
   });
+  updateAdminDateInputs();
 }
 
 function renderSettingsTabs() {
@@ -1594,8 +1680,7 @@ async function unarchiveCourse(courseId) {
   }
 }
 
-async function loadAdminCourses() {
-  const params = new URLSearchParams();
+function resolveAdminRange() {
   const today = startOfDay(new Date());
   let from = null;
   let to = null;
@@ -1606,13 +1691,77 @@ async function loadAdminCourses() {
       to = addDays(today, 1);
       break;
     case 'week':
-      from = addDays(today, -7);
-      to = addDays(today, 7);
+      from = addDays(today, -3);
+      to = addDays(today, 4);
       break;
-    case 'all':
+    case 'month': {
+      const start = new Date(today);
+      start.setDate(1);
+      from = startOfDay(start);
+      const end = new Date(start);
+      end.setMonth(end.getMonth() + 1);
+      to = startOfDay(end);
+      break;
+    }
+    case 'custom': {
+      if (state.adminFilters.from) {
+        const start = startOfDay(new Date(state.adminFilters.from));
+        if (!Number.isNaN(start.getTime())) {
+          from = start;
+        }
+      }
+      if (state.adminFilters.to) {
+        const end = startOfDay(new Date(state.adminFilters.to));
+        if (!Number.isNaN(end.getTime())) {
+          to = addDays(end, 1);
+        }
+      }
+      break;
+    }
     default:
       break;
   }
+
+  return { from, to };
+}
+
+function updateAdminDateInputs() {
+  const isCustom = state.adminFilters.range === 'custom';
+  if (elements.adminFromInput) {
+    elements.adminFromInput.disabled = !isCustom;
+    elements.adminFromInput.value = isCustom && state.adminFilters.from ? state.adminFilters.from : '';
+  }
+  if (elements.adminToInput) {
+    elements.adminToInput.disabled = !isCustom;
+    elements.adminToInput.value = isCustom && state.adminFilters.to ? state.adminFilters.to : '';
+  }
+}
+
+function syncAdminFiltersToInputs() {
+  if (elements.adminDriverSelect) {
+    elements.adminDriverSelect.value = state.adminFilters.driverId || 'all';
+  }
+  if (elements.adminStatusFilter) {
+    elements.adminStatusFilter.value = state.adminFilters.status || 'all';
+  }
+  if (elements.adminMerchandiseFilter) {
+    elements.adminMerchandiseFilter.value = state.adminFilters.merchandise || 'all';
+  }
+  if (elements.adminIssueFilter) {
+    elements.adminIssueFilter.value = state.adminFilters.issue || 'all';
+  }
+  if (elements.adminPhotoFilter) {
+    elements.adminPhotoFilter.value = state.adminFilters.hasPhoto || 'all';
+  }
+  if (elements.adminSearchFilter) {
+    elements.adminSearchFilter.value = state.adminFilters.search || '';
+  }
+  updateAdminRangeButtons();
+}
+
+async function loadAdminCourses() {
+  const params = new URLSearchParams();
+  const { from, to } = resolveAdminRange();
 
   if (from) {
     params.append('from', from.toISOString());
@@ -1625,12 +1774,262 @@ async function loadAdminCourses() {
     params.append('driverId', state.adminFilters.driverId);
   }
 
+  if (state.adminFilters.status && state.adminFilters.status !== 'all') {
+    params.append('status', state.adminFilters.status);
+  }
+
+  if (state.adminFilters.merchandise && state.adminFilters.merchandise !== 'all') {
+    params.append('merchandise', state.adminFilters.merchandise);
+  }
+
+  if (state.adminFilters.issue === 'issues') {
+    params.append('issue', 'reported');
+  } else if (state.adminFilters.issue === 'clear') {
+    params.append('issue', 'none');
+  }
+
+  if (state.adminFilters.hasPhoto === 'with') {
+    params.append('hasPhoto', 'true');
+  } else if (state.adminFilters.hasPhoto === 'without') {
+    params.append('hasPhoto', 'false');
+  }
+
+  if (state.adminFilters.search) {
+    params.append('search', state.adminFilters.search);
+  }
+
   try {
     const courses = await apiFetch(`/courses?${params.toString()}`);
     state.adminCourses = courses.map(mapCourse);
     renderAdminCourses();
   } catch (error) {
     console.error('Erreur lors du chargement des courses', error);
+  }
+}
+
+function handleAdminRangeClick(event) {
+  const button = event.target.closest('[data-admin-range]');
+  if (!button) {
+    return;
+  }
+  const range = button.getAttribute('data-admin-range') || 'all';
+  state.adminFilters.range = range;
+  if (range !== 'custom') {
+    state.adminFilters.from = null;
+    state.adminFilters.to = null;
+  }
+  updateAdminRangeButtons();
+  loadAdminCourses();
+  persistSessionState();
+}
+
+function handleAdminStatusChange() {
+  if (!elements.adminStatusFilter) {
+    return;
+  }
+  state.adminFilters.status = elements.adminStatusFilter.value || 'all';
+  loadAdminCourses();
+  persistSessionState();
+}
+
+function handleAdminMerchandiseChange() {
+  if (!elements.adminMerchandiseFilter) {
+    return;
+  }
+  state.adminFilters.merchandise = elements.adminMerchandiseFilter.value || 'all';
+  loadAdminCourses();
+  persistSessionState();
+}
+
+function handleAdminIssueChange() {
+  if (!elements.adminIssueFilter) {
+    return;
+  }
+  state.adminFilters.issue = elements.adminIssueFilter.value || 'all';
+  loadAdminCourses();
+  persistSessionState();
+}
+
+function handleAdminPhotoChange() {
+  if (!elements.adminPhotoFilter) {
+    return;
+  }
+  state.adminFilters.hasPhoto = elements.adminPhotoFilter.value || 'all';
+  loadAdminCourses();
+  persistSessionState();
+}
+
+function handleAdminDateChange() {
+  if (!elements.adminFromInput || !elements.adminToInput) {
+    return;
+  }
+  if (state.adminFilters.range !== 'custom') {
+    state.adminFilters.range = 'custom';
+  }
+  state.adminFilters.from = elements.adminFromInput.value || null;
+  state.adminFilters.to = elements.adminToInput.value || null;
+  updateAdminRangeButtons();
+  loadAdminCourses();
+  persistSessionState();
+}
+
+function scheduleAdminSearch() {
+  if (adminSearchTimer) {
+    clearTimeout(adminSearchTimer);
+  }
+  adminSearchTimer = setTimeout(() => {
+    loadAdminCourses();
+    persistSessionState();
+  }, 300);
+}
+
+function handleAdminSearchInput(event) {
+  state.adminFilters.search = event.target.value.trim();
+  scheduleAdminSearch();
+}
+
+function resetAdminFilters() {
+  state.adminFilters = { ...DEFAULT_ADMIN_FILTERS };
+  syncAdminFiltersToInputs();
+  loadAdminCourses();
+  persistSessionState();
+}
+
+function handleDriverLayoutChange(event) {
+  const layout = event.target.getAttribute('data-driver-layout');
+  if (!layout) {
+    return;
+  }
+  state.displayPreferences.driverLayout = layout;
+  applyDisplayPreferences();
+  renderTodayCourses();
+  renderWeekCourses();
+  persistSessionState();
+}
+
+function handleDriverDensityChange(event) {
+  const density = event.target.getAttribute('data-driver-density');
+  if (!density) {
+    return;
+  }
+  state.displayPreferences.driverDensity = density;
+  applyDisplayPreferences();
+  renderTodayCourses();
+  renderWeekCourses();
+  persistSessionState();
+}
+
+function handleAdminLayoutChange(event) {
+  const layout = event.target.getAttribute('data-admin-layout');
+  if (!layout) {
+    return;
+  }
+  state.displayPreferences.adminLayout = layout;
+  applyDisplayPreferences();
+  renderAdminCourses();
+  persistSessionState();
+}
+
+function handleAdminDensityChange(event) {
+  const density = event.target.getAttribute('data-admin-density');
+  if (!density) {
+    return;
+  }
+  state.displayPreferences.adminDensity = density;
+  applyDisplayPreferences();
+  renderAdminCourses();
+  persistSessionState();
+}
+
+async function exportCourses(format, context = 'planning') {
+  if (!state.isAdmin || !state.currentUser?.token) {
+    alert('Seul un administrateur connecté peut exporter les courses.');
+    return;
+  }
+
+  const params = new URLSearchParams();
+  params.append('format', format);
+
+  if (context === 'archives') {
+    params.append('archived', 'true');
+    if (state.archiveFilters.driverId && state.archiveFilters.driverId !== 'all') {
+      params.append('driverId', state.archiveFilters.driverId);
+    }
+    if (state.archiveFilters.merchandise && state.archiveFilters.merchandise !== 'all') {
+      params.append('merchandise', state.archiveFilters.merchandise);
+    }
+    const { from, to } = resolveArchiveRange();
+    if (from) {
+      params.append('from', from.toISOString());
+    }
+    if (to) {
+      params.append('to', to.toISOString());
+    }
+  } else {
+    const { from, to } = resolveAdminRange();
+    if (from) {
+      params.append('from', from.toISOString());
+    }
+    if (to) {
+      params.append('to', to.toISOString());
+    }
+    if (state.adminFilters.driverId && state.adminFilters.driverId !== 'all') {
+      params.append('driverId', state.adminFilters.driverId);
+    }
+    if (state.adminFilters.status && state.adminFilters.status !== 'all') {
+      params.append('status', state.adminFilters.status);
+    }
+    if (state.adminFilters.merchandise && state.adminFilters.merchandise !== 'all') {
+      params.append('merchandise', state.adminFilters.merchandise);
+    }
+    if (state.adminFilters.issue === 'issues') {
+      params.append('issue', 'reported');
+    } else if (state.adminFilters.issue === 'clear') {
+      params.append('issue', 'none');
+    }
+    if (state.adminFilters.hasPhoto === 'with') {
+      params.append('hasPhoto', 'true');
+    } else if (state.adminFilters.hasPhoto === 'without') {
+      params.append('hasPhoto', 'false');
+    }
+    if (state.adminFilters.search) {
+      params.append('search', state.adminFilters.search);
+    }
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/courses/export?${params.toString()}`, {
+      headers: {
+        'X-Admin-Token': state.currentUser.token,
+      },
+    });
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.message || "Impossible de générer l'export." );
+    }
+
+    const blob = await response.blob();
+    let filename = format === 'pdf' ? 'export-courses.pdf' : 'export-courses.xlsx';
+    const disposition = response.headers.get('content-disposition');
+    if (disposition) {
+      const match = /filename="?([^";]+)"?/i.exec(disposition);
+      if (match && match[1]) {
+        filename = match[1];
+      }
+    }
+
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(downloadUrl), 1500);
+  } catch (error) {
+    console.error("Erreur lors de l'export", error);
+    alert(error.message || "Impossible de générer l'export.");
   }
 }
 
@@ -2188,54 +2587,104 @@ function renderTodayCourses() {
 
   hideElement(elements.noCoursesToday);
 
+  const layout = state.displayPreferences.driverLayout || 'cards';
+  const commentsClass = state.displayPreferences.driverDensity === 'contrast' ? 'text-gray-800 font-medium' : 'text-gray-600';
+
+  if (layout === 'list') {
+    elements.todayList.className = 'today-list divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white';
+  } else {
+    elements.todayList.className = 'today-list space-y-3';
+  }
+
   courses
     .sort((a, b) => a.date.getTime() - b.date.getTime())
     .forEach((course) => {
       const container = document.createElement('div');
       const archived = course.isArchived;
-      const baseClasses = 'course-item bg-white p-4 rounded-lg shadow-sm border border-gray-200 transition';
-      container.className = `${baseClasses} ${archived ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`;
-      container.setAttribute('aria-disabled', archived ? 'true' : 'false');
-
+      const departure = escapeHtml(course.departure || '');
+      const destination = escapeHtml(course.destination || '');
+      const merchandise = escapeHtml(course.merchandise || '');
+      const comments = course.comments ? escapeHtml(course.comments) : '';
+      const issueComment = course.issueReportComment ? escapeHtml(course.issueReportComment) : '';
       const statusMeta = getCourseStatusMeta(course);
 
-      container.innerHTML = `
-        <div class="flex justify-between items-start">
-          <div>
-            <div class="font-medium">${course.departure} → ${course.destination}</div>
-            <div class="text-sm text-gray-500 mt-1">${formatTime(course.date)} • ${course.merchandise}</div>
+      if (layout === 'list') {
+        container.className = `course-item course-item--list px-4 py-3 ${
+          archived ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
+        }`;
+        container.setAttribute('aria-disabled', archived ? 'true' : 'false');
+        container.innerHTML = `
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 w-full">
+            <div class="flex-1 min-w-0">
+              <div class="font-medium text-gray-800 truncate">${departure} → ${destination}</div>
+              <div class="text-sm text-gray-500 mt-1">${formatTime(course.date)} • ${merchandise || '—'}</div>
+              ${comments ? `<div class="mt-2 text-sm ${commentsClass}"><i class="fas fa-comment mr-1"></i> ${comments}</div>` : ''}
+              ${course.status === 'issue_reported' && issueComment
+                ? `<div class="mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">Problème signalé : ${issueComment}</div>`
+                : ''}
+            </div>
+            <div class="flex flex-col items-stretch sm:items-end gap-2 min-w-[150px]">
+              <span class="px-2 py-1 text-xs rounded-full ${statusMeta.className} text-center">${statusMeta.label}</span>
+              ${
+                !archived && course.status !== 'completed' && course.status !== 'issue_reported'
+                  ? '<button type="button" class="inline-flex items-center justify-center px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 issue-toggle"><i class="fas fa-exclamation-triangle mr-2"></i>Signaler</button>'
+                  : ''
+              }
+            </div>
           </div>
-          <span class="px-2 py-1 text-xs rounded-full ${statusMeta.className}">
-            ${statusMeta.label}
-          </span>
-        </div>
-        ${course.comments ? `<div class="mt-2 text-sm text-gray-600"><i class="fas fa-comment mr-1"></i> ${course.comments}</div>` : ''}
-      `;
+        `;
+      } else {
+        const baseClasses = 'course-item bg-white p-4 rounded-lg shadow-sm border border-gray-200 transition';
+        container.className = `${baseClasses} ${archived ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`;
+        container.setAttribute('aria-disabled', archived ? 'true' : 'false');
+        container.innerHTML = `
+          <div class="flex justify-between items-start">
+            <div>
+              <div class="font-medium">${departure} → ${destination}</div>
+              <div class="text-sm text-gray-500 mt-1">${formatTime(course.date)} • ${merchandise || '—'}</div>
+            </div>
+            <span class="px-2 py-1 text-xs rounded-full ${statusMeta.className}">
+              ${statusMeta.label}
+            </span>
+          </div>
+          ${comments ? `<div class="mt-2 text-sm ${commentsClass}"><i class="fas fa-comment mr-1"></i> ${comments}</div>` : ''}
+        `;
+
+        if (course.status === 'issue_reported' && issueComment) {
+          const issueNotice = document.createElement('div');
+          issueNotice.className = 'mt-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2';
+          issueNotice.textContent = `Problème signalé : ${issueComment || 'Détail non renseigné'}`;
+          container.appendChild(issueNotice);
+        }
+
+        if (!archived && course.status !== 'completed' && course.status !== 'issue_reported') {
+          const buttonWrapper = document.createElement('div');
+          buttonWrapper.className = 'mt-3 flex justify-end';
+          const issueButton = document.createElement('button');
+          issueButton.type = 'button';
+          issueButton.className = 'inline-flex items-center px-3 py-1.5 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 issue-toggle';
+          issueButton.innerHTML = '<i class="fas fa-exclamation-triangle mr-2"></i>Signaler un problème';
+          issueButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            openCourseIssueModal(course.id);
+          });
+          buttonWrapper.appendChild(issueButton);
+          container.appendChild(buttonWrapper);
+        }
+      }
 
       if (!archived) {
         container.addEventListener('click', () => openCourseModal(course.id));
       }
 
-      if (course.status === 'issue_reported' && course.issueReportComment) {
-        const issueNotice = document.createElement('div');
-        issueNotice.className = 'mt-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2';
-        issueNotice.textContent = `Problème signalé : ${course.issueReportComment || 'Détail non renseigné'}`;
-        container.appendChild(issueNotice);
-      }
-
-      if (!archived && course.status !== 'completed' && course.status !== 'issue_reported') {
-        const buttonWrapper = document.createElement('div');
-        buttonWrapper.className = 'mt-3 flex justify-end';
-        const issueButton = document.createElement('button');
-        issueButton.type = 'button';
-        issueButton.className = 'inline-flex items-center px-3 py-1.5 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100';
-        issueButton.innerHTML = '<i class="fas fa-exclamation-triangle mr-2"></i>Signaler un problème';
-        issueButton.addEventListener('click', (event) => {
-          event.stopPropagation();
-          openCourseIssueModal(course.id);
-        });
-        buttonWrapper.appendChild(issueButton);
-        container.appendChild(buttonWrapper);
+      if (layout === 'list') {
+        const issueButton = container.querySelector('.issue-toggle');
+        if (issueButton) {
+          issueButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            openCourseIssueModal(course.id);
+          });
+        }
       }
 
       elements.todayList.appendChild(container);
@@ -2258,17 +2707,21 @@ function renderWeekCourses() {
     .forEach((course) => {
       const row = document.createElement('tr');
       const archived = course.isArchived;
-      row.className = `${archived ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'hover:bg-gray-50 cursor-pointer'}`;
+      row.className = `${archived ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'hover:bg-gray-50 cursor-pointer'} driver-week-row`;
       row.setAttribute('aria-disabled', archived ? 'true' : 'false');
 
       const statusMeta = getCourseStatusMeta(course, {
         archivedClass: 'bg-gray-300 text-gray-700',
       });
+      const dateLabel = formatDate(course.date);
+      const departure = escapeHtml(course.departure || '');
+      const destination = escapeHtml(course.destination || '');
+      const issueText = course.issueReportComment ? escapeHtml(course.issueReportComment) : '';
 
       row.innerHTML = `
-        <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Date">${formatDate(course.date)}</td>
-        <td class="px-6 py-4 text-sm" data-label="Départ">${course.departure}</td>
-        <td class="px-6 py-4 text-sm" data-label="Arrivée">${course.destination}</td>
+        <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Date">${dateLabel}</td>
+        <td class="px-6 py-4 text-sm" data-label="Départ">${departure}</td>
+        <td class="px-6 py-4 text-sm" data-label="Arrivée">${destination}</td>
         <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Horaire">${formatTime(course.date)}</td>
         <td class="px-6 py-4" data-label="Statut">
           <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -2292,8 +2745,8 @@ function renderWeekCourses() {
         const cell = document.createElement('td');
         cell.colSpan = 5;
         cell.className = 'px-6 py-3 text-sm text-red-700 border-t border-red-100';
-        const issueText = course.issueReportComment || 'Détail non renseigné';
-        cell.innerHTML = `<i class="fas fa-circle-exclamation mr-2"></i>Problème signalé : ${escapeHtml(issueText)}`;
+        const issueLabel = issueText || 'Détail non renseigné';
+        cell.innerHTML = `<i class="fas fa-circle-exclamation mr-2"></i>Problème signalé : ${issueLabel}`;
         detailRow.appendChild(cell);
         elements.weekList.appendChild(row);
         elements.weekList.appendChild(detailRow);
@@ -2314,29 +2767,108 @@ function renderWeekCourses() {
 function renderAdminCourses() {
   elements.adminWeekList.innerHTML = '';
 
+  if (elements.adminCardList) {
+    elements.adminCardList.innerHTML = '';
+  }
+
   if (!state.adminCourses.length) {
     showElement(elements.noCoursesAdmin);
+    if (elements.adminCardList) {
+      hideElement(elements.adminCardList);
+    }
     return;
   }
 
   hideElement(elements.noCoursesAdmin);
 
+  const layout = state.displayPreferences.adminLayout || 'table';
+  if (layout === 'cards' && elements.adminCardList) {
+    hideElement(elements.adminTableWrapper);
+    showElement(elements.adminCardList);
+  } else {
+    showElement(elements.adminTableWrapper);
+    hideElement(elements.adminCardList);
+  }
+
   state.adminCourses
     .slice()
     .sort((a, b) => a.date.getTime() - b.date.getTime())
     .forEach((course) => {
-      const row = document.createElement('tr');
-      row.className = 'hover:bg-gray-50';
       const statusMeta = getCourseStatusMeta(course, {
         archivedClass: 'bg-gray-200 text-gray-600',
       });
+      const dateLabel = formatDate(course.date);
+      const timeLabel = formatTime(course.date);
+      const driverName = escapeHtml(course.driverName || '');
+      const departure = escapeHtml(course.departure || '');
+      const destination = escapeHtml(course.destination || '');
+      const merchandise = escapeHtml(course.merchandise || '');
+      const comments = course.comments ? escapeHtml(course.comments) : '';
+
+      if (layout === 'cards' && elements.adminCardList) {
+        const card = document.createElement('div');
+        card.className = 'admin-course-card bg-white border border-gray-200 rounded-lg p-4 shadow-sm';
+        card.innerHTML = `
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="text-sm text-gray-500">${dateLabel} • ${timeLabel}</div>
+              <div class="font-semibold text-gray-900 mt-1">${driverName || '—'}</div>
+              <div class="text-sm text-gray-700 mt-2">${departure} → ${destination}</div>
+              <div class="text-xs text-gray-500 mt-1">${merchandise || '—'}</div>
+              ${comments ? `<div class="mt-2 text-sm text-gray-600"><i class="fas fa-comment mr-1"></i> ${comments}</div>` : ''}
+            </div>
+            <div class="flex flex-col items-end gap-2">
+              <span class="px-2 py-1 text-xs rounded-full ${statusMeta.className}">${statusMeta.label}</span>
+              ${course.status === 'issue_reported'
+                ? '<span class="text-xs font-medium text-red-700"><i class="fas fa-circle-exclamation mr-1"></i>Problème en attente</span>'
+                : ''}
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-3 mt-4 justify-end" data-card-actions>
+            <button class="text-amber-600 hover:text-amber-800" data-action="archive" aria-label="Archiver la course">
+              <i class="fas fa-box-archive"></i>
+            </button>
+            <button class="text-blue-600 hover:text-blue-900" data-action="edit" aria-label="Modifier la course">
+              <i class="fas fa-edit"></i>
+            </button>
+            <button class="text-red-600 hover:text-red-900" data-action="delete" aria-label="Supprimer la course">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>
+        `;
+
+        const actions = card.querySelector('[data-card-actions]');
+        const archiveBtn = actions?.querySelector('[data-action="archive"]');
+        const editBtn = actions?.querySelector('[data-action="edit"]');
+        const deleteBtn = actions?.querySelector('[data-action="delete"]');
+
+        archiveBtn?.addEventListener('click', (event) => {
+          event.stopPropagation();
+          archiveCourse(course.id);
+        });
+        editBtn?.addEventListener('click', (event) => {
+          event.stopPropagation();
+          openCourseEditor(course);
+        });
+        deleteBtn?.addEventListener('click', (event) => {
+          event.stopPropagation();
+          deleteCourse(course.id);
+        });
+
+        card.addEventListener('click', () => openCourseModal(course.id));
+        elements.adminCardList.appendChild(card);
+        return;
+      }
+
+      const row = document.createElement('tr');
+      row.className = 'hover:bg-gray-50 admin-course-row';
 
       row.innerHTML = `
-        <td class="px-6 py-4 text-sm" data-label="Chauffeur">${course.driverName || ''}</td>
-        <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Date">${formatDate(course.date)}</td>
-        <td class="px-6 py-4 text-sm" data-label="Départ">${course.departure}</td>
-        <td class="px-6 py-4 text-sm" data-label="Arrivée">${course.destination}</td>
-        <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Horaire">${formatTime(course.date)}</td>
+        <td class="px-6 py-4 text-sm" data-label="Chauffeur">${driverName}</td>
+        <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Date">${dateLabel}</td>
+        <td class="px-6 py-4 text-sm" data-label="Départ">${departure}</td>
+        <td class="px-6 py-4 text-sm" data-label="Arrivée">${destination}</td>
+        <td class="px-6 py-4 text-sm sm:whitespace-nowrap" data-label="Horaire">${timeLabel}</td>
         <td class="px-6 py-4" data-label="Statut">
           <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <span class="px-2 py-1 text-xs rounded-full ${statusMeta.className}">
@@ -2363,19 +2895,20 @@ function renderAdminCourses() {
       `;
 
       row.addEventListener('click', (event) => {
-        const target = event.target.closest('button');
-        if (target && target.dataset.action === 'edit') {
+        const target = event.target.closest('button[data-action]');
+        if (target) {
           event.stopPropagation();
-          editCourse(course.id);
-        } else if (target && target.dataset.action === 'archive') {
-          event.stopPropagation();
-          archiveCourse(course.id);
-        } else if (target && target.dataset.action === 'delete') {
-          event.stopPropagation();
-          deleteCourse(course.id);
-        } else {
-          openCourseModal(course.id);
+          const action = target.dataset.action;
+          if (action === 'edit') {
+            editCourse(course.id);
+          } else if (action === 'archive') {
+            archiveCourse(course.id);
+          } else if (action === 'delete') {
+            deleteCourse(course.id);
+          }
+          return;
         }
+        openCourseModal(course.id);
       });
 
       elements.adminWeekList.appendChild(row);
@@ -2819,6 +3352,87 @@ function completeCourse(courseId) {
   openPhotoModal();
 }
 
+function stopCameraStream() {
+  if (elements.camera?.srcObject) {
+    elements.camera.srcObject.getTracks().forEach((track) => track.stop());
+    elements.camera.srcObject = null;
+  }
+}
+
+function updateCameraFacingSelect() {
+  if (elements.cameraFacingSelect) {
+    elements.cameraFacingSelect.value = state.cameraFacingMode;
+  }
+}
+
+async function startCameraStream({ fallback = true } = {}) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    if (elements.photoPlaceholder) {
+      elements.photoPlaceholder.innerHTML = `
+        <i class="fas fa-camera-slash text-4xl mb-2"></i>
+        <p>Appareil photo non disponible sur cet appareil.</p>
+      `;
+      showElement(elements.photoPlaceholder);
+    }
+    return;
+  }
+
+  const desiredFacingMode = state.cameraFacingMode === 'user' ? 'user' : 'environment';
+  const constraints = { video: { facingMode: desiredFacingMode } };
+
+  stopCameraStream();
+  showElement(elements.photoPlaceholder);
+  hideElement(elements.camera);
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    elements.camera.srcObject = stream;
+    await elements.camera.play();
+    hideElement(elements.photoPlaceholder);
+    showElement(elements.camera);
+  } catch (error) {
+    console.warn('Accès caméra refusé ou indisponible avec facingMode', desiredFacingMode, error);
+    if (fallback && desiredFacingMode === 'environment') {
+      state.cameraFacingMode = 'user';
+      updateCameraFacingSelect();
+      persistSessionState();
+      await startCameraStream({ fallback: false });
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      elements.camera.srcObject = stream;
+      await elements.camera.play();
+      state.cameraFacingMode = 'user';
+      updateCameraFacingSelect();
+      persistSessionState();
+      hideElement(elements.photoPlaceholder);
+      showElement(elements.camera);
+    } catch (innerError) {
+      console.error('Impossible de démarrer la caméra', innerError);
+      if (elements.photoPlaceholder) {
+        elements.photoPlaceholder.innerHTML = `
+          <i class="fas fa-camera-slash text-4xl mb-2"></i>
+          <p>Impossible d\'accéder à la caméra.</p>
+        `;
+        showElement(elements.photoPlaceholder);
+      }
+    }
+  }
+}
+
+function setCameraFacingMode(mode, { persist = true, restart = true } = {}) {
+  const normalized = mode === 'user' ? 'user' : 'environment';
+  state.cameraFacingMode = normalized;
+  updateCameraFacingSelect();
+  if (persist) {
+    persistSessionState();
+  }
+  if (restart) {
+    startCameraStream();
+  }
+}
+
 function openPhotoModal() {
   state.photoDataUrl = null;
   showElement(elements.photoModal);
@@ -2828,36 +3442,18 @@ function openPhotoModal() {
   hideElement(elements.confirmPhotoBtn);
   showElement(elements.captureBtn);
   showElement(elements.photoPlaceholder);
-
-  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    navigator.mediaDevices
-      .getUserMedia({ video: true })
-      .then((stream) => {
-        elements.camera.srcObject = stream;
-        elements.camera.play();
-        hideElement(elements.photoPlaceholder);
-        showElement(elements.camera);
-      })
-      .catch((error) => {
-        console.error('Accès caméra refusé', error);
-        elements.photoPlaceholder.innerHTML = `
-          <i class="fas fa-camera-slash text-4xl mb-2"></i>
-          <p>Impossible d'accéder à l'appareil photo</p>
-        `;
-      });
-  } else {
+  if (elements.photoPlaceholder) {
     elements.photoPlaceholder.innerHTML = `
-      <i class="fas fa-camera-slash text-4xl mb-2"></i>
-      <p>Appareil photo non disponible</p>
+      <i class="fas fa-camera text-4xl mb-2 text-green-600"></i>
+      <p>Initialisation de la caméra…</p>
     `;
   }
+  updateCameraFacingSelect();
+  startCameraStream();
 }
 
 function closePhotoModal() {
-  if (elements.camera.srcObject) {
-    elements.camera.srcObject.getTracks().forEach((track) => track.stop());
-    elements.camera.srcObject = null;
-  }
+  stopCameraStream();
 
   hideElement(elements.photoModal);
   state.photoDataUrl = null;
@@ -3478,15 +4074,23 @@ function capturePhoto() {
   showElement(elements.photoPreview);
   showElement(elements.retakePhotoBtn);
   showElement(elements.confirmPhotoBtn);
+  stopCameraStream();
 }
 
 function retakePhoto() {
   state.photoDataUrl = null;
-  showElement(elements.camera);
   hideElement(elements.photoPreview);
   hideElement(elements.retakePhotoBtn);
   hideElement(elements.confirmPhotoBtn);
   showElement(elements.captureBtn);
+  showElement(elements.photoPlaceholder);
+  if (elements.photoPlaceholder) {
+    elements.photoPlaceholder.innerHTML = `
+      <i class="fas fa-camera text-4xl mb-2 text-green-600"></i>
+      <p>Initialisation de la caméra…</p>
+    `;
+  }
+  startCameraStream();
 }
 
 async function confirmPhoto() {
@@ -3543,6 +4147,8 @@ function persistSessionState() {
   const session = {
     role: state.currentUser.role,
     activeDriverTab: state.activeDriverTab || 'today',
+    cameraFacingMode: state.cameraFacingMode,
+    displayPreferences: { ...state.displayPreferences },
   };
 
   if (state.currentUser.role === 'driver') {
@@ -3694,6 +4300,17 @@ async function restoreSessionFromStorage() {
     return;
   }
 
+  if (saved.displayPreferences) {
+    state.displayPreferences = {
+      ...state.displayPreferences,
+      ...saved.displayPreferences,
+    };
+  }
+
+  if (saved.cameraFacingMode) {
+    state.cameraFacingMode = saved.cameraFacingMode;
+  }
+
   if (saved.role === 'admin' && saved.token) {
     try {
       const response = await fetch(`${API_BASE}/admins/session`, {
@@ -3715,6 +4332,7 @@ async function restoreSessionFromStorage() {
         adminManagementView: saved.adminManagementView || 'list',
         adminFilters: saved.adminFilters || {},
         archiveFilters: saved.archiveFilters || {},
+        displayPreferences: saved.displayPreferences || {},
       });
       return;
     } catch (error) {
@@ -3731,6 +4349,7 @@ async function restoreSessionFromStorage() {
       await loginAsDriver(driver, {
         skipPasswordCheck: true,
         initialTab: saved.activeDriverTab || 'today',
+        displayPreferences: saved.displayPreferences || {},
       });
       return;
     } catch (error) {
@@ -3774,6 +4393,13 @@ function registerEventListeners() {
   elements.captureBtn.addEventListener('click', capturePhoto);
   elements.confirmPhotoBtn.addEventListener('click', confirmPhoto);
   elements.retakePhotoBtn.addEventListener('click', retakePhoto);
+  elements.switchCameraBtn?.addEventListener('click', () => {
+    const nextMode = state.cameraFacingMode === 'environment' ? 'user' : 'environment';
+    setCameraFacingMode(nextMode);
+  });
+  elements.cameraFacingSelect?.addEventListener('change', (event) => {
+    setCameraFacingMode(event.target.value || 'environment');
+  });
   elements.courseIssueForm?.addEventListener('submit', handleCourseIssueSubmit);
   elements.courseIssueCancel?.addEventListener('click', closeCourseIssueModal);
   elements.courseIssueClose?.addEventListener('click', closeCourseIssueModal);
@@ -3784,12 +4410,8 @@ function registerEventListeners() {
   elements.messagingThreadList?.addEventListener('click', handleMessagingThreadClick);
   elements.adminDriverSelect.addEventListener('change', () => {
     state.adminFilters.driverId = elements.adminDriverSelect.value || 'all';
-    if (state.isAdmin) {
-      loadAdminCourses();
-    }
-    if (state.currentUser?.role === 'admin') {
-      persistSessionState();
-    }
+    loadAdminCourses();
+    persistSessionState();
   });
   elements.newCourseAdminBtn.addEventListener('click', () => {
     openCourseEditor();
@@ -3800,17 +4422,50 @@ function registerEventListeners() {
 
   if (elements.adminRangeButtons) {
     elements.adminRangeButtons.forEach((button) => {
-      button.addEventListener('click', () => {
-        const range = button.getAttribute('data-admin-range');
-        state.adminFilters.range = range || 'week';
-        updateAdminRangeButtons();
-        loadAdminCourses();
-        if (state.currentUser?.role === 'admin') {
-          persistSessionState();
-        }
-      });
+      button.addEventListener('click', handleAdminRangeClick);
     });
   }
+
+  elements.adminStatusFilter?.addEventListener('change', handleAdminStatusChange);
+  elements.adminMerchandiseFilter?.addEventListener('change', handleAdminMerchandiseChange);
+  elements.adminIssueFilter?.addEventListener('change', handleAdminIssueChange);
+  elements.adminPhotoFilter?.addEventListener('change', handleAdminPhotoChange);
+  elements.adminFromInput?.addEventListener('change', handleAdminDateChange);
+  elements.adminToInput?.addEventListener('change', handleAdminDateChange);
+  elements.adminSearchFilter?.addEventListener('input', handleAdminSearchInput);
+  elements.adminResetFiltersBtn?.addEventListener('click', (event) => {
+    event.preventDefault();
+    resetAdminFilters();
+  });
+  elements.adminExportPdfBtn?.addEventListener('click', (event) => {
+    event.preventDefault();
+    exportCourses('pdf', state.adminView === 'archives' ? 'archives' : 'planning');
+  });
+  elements.adminExportExcelBtn?.addEventListener('click', (event) => {
+    event.preventDefault();
+    exportCourses('xlsx', state.adminView === 'archives' ? 'archives' : 'planning');
+  });
+  elements.archiveExportPdfBtn?.addEventListener('click', (event) => {
+    event.preventDefault();
+    exportCourses('pdf', 'archives');
+  });
+  elements.archiveExportExcelBtn?.addEventListener('click', (event) => {
+    event.preventDefault();
+    exportCourses('xlsx', 'archives');
+  });
+
+  elements.driverLayoutButtons?.forEach((button) => {
+    button.addEventListener('click', handleDriverLayoutChange);
+  });
+  elements.driverDensityButtons?.forEach((button) => {
+    button.addEventListener('click', handleDriverDensityChange);
+  });
+  elements.adminLayoutButtons?.forEach((button) => {
+    button.addEventListener('click', handleAdminLayoutChange);
+  });
+  elements.adminDensityButtons?.forEach((button) => {
+    button.addEventListener('click', handleAdminDensityChange);
+  });
 
   elements.adminPlanningTab?.addEventListener('click', () => switchAdminView('planning'));
   elements.adminArchivesTab?.addEventListener('click', () => switchAdminView('archives'));
@@ -3887,6 +4542,7 @@ function init() {
   updateArchivePeriodInputs();
   renderDriverManagementPanel();
   renderSettingsTabs();
+  applyDisplayPreferences();
   registerEventListeners();
   setupRealtimeUpdates();
   resetMessagingState();
