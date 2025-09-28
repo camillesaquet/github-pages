@@ -106,6 +106,13 @@ const COURSE_STATUSES = new Set([
   COURSE_STATUS_ISSUE_REPORTED,
 ]);
 
+const NOTIFICATION_DATE_FORMATTER = new Intl.DateTimeFormat('fr-FR', {
+  dateStyle: 'short',
+  timeStyle: 'short',
+});
+const DRIVER_NOTIFICATION_CTA = "Ouvrez l'application pour consulter les détails.";
+const MESSAGE_NOTIFICATION_CTA = "Ouvrez l'application pour lire et répondre.";
+
 const activeAdminSessions = new Map();
 const adminSessionIndex = new Map();
 const activeDriverSessions = new Map();
@@ -183,6 +190,205 @@ function mapCourseRow(row, options = {}) {
   }
 
   return mapped;
+}
+
+function sanitizeNotificationText(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  return String(value).replace(/\s+/g, ' ').trim();
+}
+
+function truncateNotificationText(value, maxLength = 160) {
+  const text = sanitizeNotificationText(value);
+  if (!text) {
+    return '';
+  }
+  if (text.length <= maxLength) {
+    return text;
+  }
+  const safeLength = Math.max(0, maxLength - 1);
+  return `${text.slice(0, safeLength)}…`;
+}
+
+function formatNotificationDateTime(value) {
+  if (!value) {
+    return '';
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  try {
+    return NOTIFICATION_DATE_FORMATTER.format(date);
+  } catch (error) {
+    return '';
+  }
+}
+
+function buildCourseNotificationSummary(course) {
+  if (!course) {
+    return null;
+  }
+  return {
+    id: Number(course.id) || null,
+    driverId: Number(course.driver_id) || null,
+    dateTime: course.date_time || null,
+    departure: course.departure || null,
+    destination: course.destination || null,
+    merchandise: course.merchandise || null,
+    status: course.status || null,
+    archivedAt: course.archived_at || null,
+    issueReportedAt: course.issue_reported_at || null,
+    issueReportComment: course.issue_report_comment || null,
+  };
+}
+
+function buildCourseNotificationMessage(action, course) {
+  if (!course) {
+    return null;
+  }
+
+  const summary = buildCourseNotificationSummary(course);
+  const segments = [];
+
+  if (summary?.departure || summary?.destination) {
+    const departure = summary?.departure ? sanitizeNotificationText(summary.departure) : '';
+    const destination = summary?.destination ? sanitizeNotificationText(summary.destination) : '';
+    const route = [departure, destination].filter(Boolean).join(' → ');
+    if (route) {
+      segments.push(route);
+    }
+  }
+
+  const formattedDate = formatNotificationDateTime(summary?.dateTime);
+  if (formattedDate) {
+    segments.push(`Prévue ${formattedDate}`);
+  }
+
+  let title = '';
+  let mainText = '';
+
+  switch (action) {
+    case 'created':
+    case 'restored':
+    case 'reopened':
+      title = 'Nouvelle course disponible';
+      mainText = 'Une nouvelle course vient d’être planifiée pour vous.';
+      break;
+    case 'updated':
+      title = 'Course mise à jour';
+      mainText = 'Des modifications ont été apportées à l’une de vos courses.';
+      break;
+    case 'deleted':
+      title = 'Course annulée';
+      mainText = 'Cette course a été retirée de votre planning.';
+      break;
+    case 'archived':
+      title = 'Course archivée';
+      mainText = 'Cette course a été archivée par l’administration.';
+      break;
+    case 'completed':
+      title = 'Course validée';
+      mainText = 'La course a été marquée comme terminée.';
+      break;
+    case 'issue_reported': {
+      title = 'Problème signalé';
+      const comment = truncateNotificationText(summary?.issueReportComment, 120);
+      mainText = comment ? `Problème signalé : ${comment}` : 'Un problème a été signalé sur cette course.';
+      break;
+    }
+    default:
+      title = 'Mise à jour de votre planning';
+      mainText = 'Votre planning vient d’être actualisé.';
+      break;
+  }
+
+  const bodyParts = [];
+  if (segments.length) {
+    bodyParts.push(segments.join(' · '));
+  }
+  if (mainText) {
+    bodyParts.push(mainText);
+  }
+  bodyParts.push(DRIVER_NOTIFICATION_CTA);
+
+  const body = sanitizeNotificationText(bodyParts.filter(Boolean).join(' '));
+  const titleText = sanitizeNotificationText(title) || 'Notification';
+
+  const notification = {
+    title: titleText,
+    body,
+    context: 'course',
+    audience: 'driver',
+    tag: `course-${summary?.id || course.id || 'update'}-${action || 'updated'}`,
+  };
+
+  if (summary?.id || summary?.driverId) {
+    notification.data = {};
+    if (summary?.id) {
+      notification.data.courseId = summary.id;
+    }
+    if (summary?.driverId) {
+      notification.data.driverId = summary.driverId;
+    }
+  }
+
+  return notification;
+}
+
+function buildMessageNotificationPayload(senderType, message) {
+  if (!message) {
+    return null;
+  }
+
+  const driverId = Number(message.driverId ?? message.driver_id ?? message.driverID) || null;
+  const snippet = truncateNotificationText(message.body, 140);
+  const baseTag = driverId ? `message-${driverId}` : 'message-thread';
+  const tag = message.id ? `${baseTag}-${message.id}` : `${baseTag}-${Date.now()}`;
+
+  if (senderType === 'admin') {
+    const segments = [];
+    if (snippet) {
+      segments.push(snippet);
+    }
+    segments.push(MESSAGE_NOTIFICATION_CTA);
+
+    const notification = {
+      title: "Nouveau message de l'administration",
+      body: sanitizeNotificationText(segments.join(' ')),
+      context: 'message',
+      audience: 'driver',
+      tag,
+    };
+
+    if (driverId) {
+      notification.data = { driverId };
+    }
+
+    return notification;
+  }
+
+  const senderLabel = sanitizeNotificationText(message.senderLabel || 'Un chauffeur');
+  const segments = [];
+  if (snippet) {
+    segments.push(snippet);
+  }
+  segments.push(MESSAGE_NOTIFICATION_CTA);
+
+  const notification = {
+    title: `${senderLabel} vous a écrit`,
+    body: sanitizeNotificationText(segments.join(' ')),
+    context: 'message',
+    audience: 'admin',
+    tag,
+  };
+
+  if (driverId) {
+    notification.data = { driverId };
+  }
+
+  return notification;
 }
 
 function buildCourseQuery(filters = {}) {
@@ -2392,11 +2598,16 @@ app.post('/api/courses', async (req, res) => {
     const creator = user || 'LS';
     await logActivity(course.id, 'created', creator, { createdBy: creator });
 
+    const summary = buildCourseNotificationSummary(course);
+    const notification = buildCourseNotificationMessage('created', course);
+
     res.status(201).json(course);
     broadcastEvent('courses:changed', {
       action: 'created',
       courseId: course.id,
       driverId: course.driver_id,
+      summary,
+      notification,
     });
   } catch (error) {
     console.error('Error creating course', error);
@@ -2443,11 +2654,16 @@ app.put('/api/courses/:id', async (req, res) => {
     await logActivity(courseId, 'modified', user || 'LS', 'Course modifiée');
 
     const updated = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    const summary = buildCourseNotificationSummary(updated);
+    const notification = buildCourseNotificationMessage('updated', updated);
+
     res.json(updated);
     broadcastEvent('courses:changed', {
       action: 'updated',
       courseId: updated.id,
       driverId: updated.driver_id,
+      summary,
+      notification,
     });
   } catch (error) {
     console.error('Error updating course', error);
@@ -2474,11 +2690,17 @@ app.delete('/api/courses/:id', async (req, res) => {
 
     await db.run('DELETE FROM courses WHERE id = ?', [courseId]);
 
+    const deletedCourse = { ...existing, status: 'deleted' };
+    const summary = buildCourseNotificationSummary(deletedCourse);
+    const notification = buildCourseNotificationMessage('deleted', deletedCourse);
+
     res.status(204).send();
     broadcastEvent('courses:changed', {
       action: 'deleted',
       courseId: Number(courseId),
       driverId: existing.driver_id,
+      summary,
+      notification,
     });
   } catch (error) {
     console.error('Error deleting course', error);
@@ -2500,11 +2722,17 @@ app.post('/api/courses/:id/archive', async (req, res) => {
     await db.run('UPDATE courses SET archived_at = ?, updated_at = ? WHERE id = ?', [archivedAt, archivedAt, courseId]);
     await logActivity(courseId, 'archived', user || 'LS', 'Course archivée');
 
+    const updatedCourse = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    const summary = buildCourseNotificationSummary(updatedCourse);
+    const notification = buildCourseNotificationMessage('archived', updatedCourse);
+
     res.json({ message: 'Course archivée', archivedAt });
     broadcastEvent('courses:changed', {
       action: 'archived',
       courseId: Number(courseId),
       driverId: course.driver_id,
+      summary,
+      notification,
     });
   } catch (error) {
     console.error('Error archiving course', error);
@@ -2530,11 +2758,17 @@ app.post('/api/courses/:id/unarchive', async (req, res) => {
     await db.run('UPDATE courses SET archived_at = NULL, updated_at = ? WHERE id = ?', [updatedAt, courseId]);
     await logActivity(courseId, 'restored', user || 'LS', 'Course désarchivée');
 
+    const updatedCourse = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    const summary = buildCourseNotificationSummary(updatedCourse);
+    const notification = buildCourseNotificationMessage('restored', updatedCourse);
+
     res.json({ message: 'Course restaurée' });
     broadcastEvent('courses:changed', {
       action: 'restored',
       courseId: Number(courseId),
       driverId: course.driver_id,
+      summary,
+      notification,
     });
   } catch (error) {
     console.error('Error unarchiving course', error);
@@ -2613,11 +2847,17 @@ app.post('/api/courses/:id/report-issue', async (req, res) => {
       console.error("Erreur lors de l'envoi de la notification de problème", emailError);
     }
 
+    const updatedCourse = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    const summary = buildCourseNotificationSummary(updatedCourse);
+    const notification = buildCourseNotificationMessage('issue_reported', updatedCourse);
+
     res.json({ message: 'Problème signalé', email: emailResult });
     broadcastEvent('courses:changed', {
       action: 'issue_reported',
       courseId,
       driverId: course.driver_id,
+      summary,
+      notification,
     });
   } catch (error) {
     console.error('Error reporting course issue', error);
@@ -2667,6 +2907,10 @@ app.post('/api/courses/:id/complete', async (req, res) => {
 
     await mergeCreationAndCompletionActivity(courseId, userInitials || 'LS', completionComments || null);
 
+    const updatedCourse = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    const summary = buildCourseNotificationSummary(updatedCourse);
+    const notification = buildCourseNotificationMessage('completed', updatedCourse);
+
     const completionEmail = await sendCompletionEmail(
       { ...course, photo_path: photoPath },
       driver,
@@ -2679,6 +2923,8 @@ app.post('/api/courses/:id/complete', async (req, res) => {
       action: 'completed',
       courseId: Number(courseId),
       driverId: course.driver_id,
+      summary,
+      notification,
     });
   } catch (error) {
     console.error('Error completing course', error);
@@ -2728,11 +2974,17 @@ app.post('/api/courses/:id/reopen', async (req, res) => {
 
     await logActivity(courseId, 'reopened', user || 'LS', 'Course réouverte');
 
+    const updatedCourse = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    const summary = buildCourseNotificationSummary(updatedCourse);
+    const notification = buildCourseNotificationMessage('reopened', updatedCourse);
+
     res.json({ message: 'Course remise en attente' });
     broadcastEvent('courses:changed', {
       action: 'reopened',
       courseId: Number(courseId),
       driverId: course.driver_id,
+      summary,
+      notification,
     });
   } catch (error) {
     console.error('Error reopening course', error);
@@ -2998,11 +3250,13 @@ app.post('/api/messages', async (req, res) => {
 
     const row = await messagesDb.get('SELECT * FROM messages WHERE id = ?', [insertResult.lastID]);
     const message = await serializeMessage(row);
+    const notification = buildMessageNotificationPayload(senderType, message);
 
     broadcastEvent('messages:new', {
       driverId: Number(driverId),
       senderType,
       message,
+      notification,
     });
 
     res.status(201).json(message);

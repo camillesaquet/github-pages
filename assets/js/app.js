@@ -272,9 +272,26 @@ const elements = {
   notificationPrompt: document.getElementById('notification-permission'),
   notificationAllow: document.getElementById('notification-allow'),
   notificationDismiss: document.getElementById('notification-dismiss'),
+  realtimeToastRegion: document.getElementById('realtime-toast-region'),
 };
 
 const NOTIFICATION_SETTINGS_KEY = 'agriHolannNotificationSettings';
+const NOTIFICATION_CTA_SUFFIX = "Ouvrez l'application pour consulter les détails.";
+const NOTIFICATION_MESSAGE_CTA_SUFFIX = "Ouvrez l'application pour lire et répondre.";
+const REALTIME_TOAST_DURATION = 9000;
+const MAX_REALTIME_TOASTS = 3;
+const NOTIFICATION_DATE_FORMATTER = new Intl.DateTimeFormat('fr-FR', {
+  dateStyle: 'short',
+  timeStyle: 'short',
+});
+const REALTIME_TOAST_ICONS = {
+  course:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16a1 1 0 0 1 1 1v5.382a1 1 0 0 1-.293.707l-2.707 2.707A1 1 0 0 1 17.586 16H6.414a1 1 0 0 1-.707-.293L3 13.586A1 1 0 0 1 2.707 12.88L4 11.586V7a1 1 0 0 1 1-1z"/><path d="M8 11h8"/><path d="M9 21h6"/></svg>',
+  message:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.75A2.75 2.75 0 0 1 5.75 4h12.5A2.75 2.75 0 0 1 21 6.75v8.5A2.75 2.75 0 0 1 18.25 18H8.414a1.5 1.5 0 0 0-1.06.44l-2.12 2.12A.75.75 0 0 1 4 19.94V6.75z"/><path d="m5 7 7 4.5L19 7"/></svg>',
+  info:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v-4"/><path d="M12 7h.01"/><circle cx="12" cy="12" r="9"/></svg>',
+};
 let eventSource = null;
 
 function showElement(element) {
@@ -375,6 +392,236 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function normalizeNotificationText(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  return String(value).replace(/\s+/g, ' ').trim();
+}
+
+function truncateNotificationText(value, maxLength = 160) {
+  const text = normalizeNotificationText(value);
+  if (!text) {
+    return '';
+  }
+  if (text.length <= maxLength) {
+    return text;
+  }
+  const safeLength = Math.max(0, maxLength - 1);
+  return `${text.slice(0, safeLength)}…`;
+}
+
+function formatNotificationDateTime(value) {
+  if (!value) {
+    return '';
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  try {
+    return NOTIFICATION_DATE_FORMATTER.format(date);
+  } catch (error) {
+    return '';
+  }
+}
+
+function getDefaultCourseNotificationTitle(action) {
+  switch (action) {
+    case 'created':
+    case 'restored':
+    case 'reopened':
+      return 'Nouvelle course disponible';
+    case 'updated':
+      return 'Course mise à jour';
+    case 'deleted':
+      return 'Course annulée';
+    case 'archived':
+      return 'Course archivée';
+    case 'completed':
+      return 'Course validée';
+    case 'issue_reported':
+      return 'Problème signalé';
+    default:
+      return 'Mise à jour de votre planning';
+  }
+}
+
+function buildCourseNotificationBodyFromSummary(summary, action) {
+  if (!summary) {
+    return '';
+  }
+
+  const segments = [];
+  const departure = summary.departure ? normalizeNotificationText(summary.departure) : '';
+  const destination = summary.destination ? normalizeNotificationText(summary.destination) : '';
+  if (departure || destination) {
+    const route = [departure, destination].filter(Boolean).join(' → ');
+    if (route) {
+      segments.push(route);
+    }
+  }
+
+  const formattedDate = formatNotificationDateTime(summary.dateTime);
+  if (formattedDate) {
+    segments.push(`Prévue ${formattedDate}`);
+  }
+
+  let mainText = '';
+  switch (action) {
+    case 'created':
+    case 'restored':
+    case 'reopened':
+      mainText = 'Une nouvelle course vient d’être planifiée pour vous.';
+      break;
+    case 'updated':
+      mainText = 'Des modifications ont été apportées à l’une de vos courses.';
+      break;
+    case 'deleted':
+      mainText = 'Cette course a été retirée de votre planning.';
+      break;
+    case 'archived':
+      mainText = 'Cette course a été archivée par l’administration.';
+      break;
+    case 'completed':
+      mainText = 'La course a été marquée comme terminée.';
+      break;
+    case 'issue_reported':
+      mainText = 'Un problème a été signalé sur cette course.';
+      break;
+    default:
+      mainText = 'Votre planning vient d’être actualisé.';
+      break;
+  }
+
+  const bodyParts = [];
+  if (segments.length) {
+    bodyParts.push(segments.join(' · '));
+  }
+  if (mainText) {
+    bodyParts.push(mainText);
+  }
+  if (action === 'issue_reported' && summary.issueReportComment) {
+    bodyParts.push(`Commentaire : ${truncateNotificationText(summary.issueReportComment, 120)}`);
+  }
+
+  return normalizeNotificationText(bodyParts.filter(Boolean).join(' '));
+}
+
+function getDefaultMessageNotificationTitle(senderType, message) {
+  if (senderType === 'admin') {
+    return "Nouveau message de l'administration";
+  }
+  const label = normalizeNotificationText(message?.senderLabel || '');
+  if (label) {
+    return `${label} vous a écrit`;
+  }
+  return 'Nouveau message reçu';
+}
+
+function buildDefaultMessageNotificationBody(senderType, message) {
+  const snippet = truncateNotificationText(message?.body, 140);
+  const parts = [];
+  if (snippet) {
+    parts.push(snippet);
+  }
+  parts.push(NOTIFICATION_MESSAGE_CTA_SUFFIX);
+  return normalizeNotificationText(parts.filter(Boolean).join(' '));
+}
+
+function getRealtimeToastIcon(context) {
+  if (context && REALTIME_TOAST_ICONS[context]) {
+    return REALTIME_TOAST_ICONS[context];
+  }
+  return REALTIME_TOAST_ICONS.info;
+}
+
+function dismissRealtimeToast(toast, { immediate = false } = {}) {
+  if (!toast || toast.dataset.dismissed === 'true') {
+    return;
+  }
+  toast.dataset.dismissed = 'true';
+
+  if (immediate) {
+    toast.remove();
+    return;
+  }
+
+  toast.classList.remove('realtime-toast--visible');
+  toast.classList.add('realtime-toast--leaving');
+
+  window.setTimeout(() => {
+    toast.remove();
+  }, 220);
+}
+
+function displayInAppNotification(descriptor) {
+  if (!descriptor || !descriptor.title || !elements.realtimeToastRegion) {
+    return;
+  }
+
+  const container = elements.realtimeToastRegion;
+
+  while (container.childElementCount >= MAX_REALTIME_TOASTS) {
+    const firstToast = container.firstElementChild;
+    if (!firstToast) {
+      break;
+    }
+    dismissRealtimeToast(firstToast, { immediate: true });
+  }
+
+  const toast = document.createElement('div');
+  const context = descriptor.context || 'info';
+  const iconMarkup = getRealtimeToastIcon(context);
+  const messageText = descriptor.body ? escapeHtml(descriptor.body) : '';
+
+  toast.className = `realtime-toast realtime-toast--${context}`;
+  toast.setAttribute('role', 'status');
+  toast.setAttribute('aria-live', 'polite');
+  toast.innerHTML = `
+    <div class="realtime-toast__icon" aria-hidden="true">${iconMarkup}</div>
+    <div class="realtime-toast__content">
+      <p class="realtime-toast__title">${escapeHtml(descriptor.title)}</p>
+      ${messageText ? `<p class="realtime-toast__message">${messageText}</p>` : ''}
+    </div>
+    <button type="button" class="realtime-toast__close" aria-label="Fermer la notification">
+      <span aria-hidden="true">×</span>
+    </button>
+  `;
+
+  container.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.classList.add('realtime-toast--visible');
+  });
+
+  const closeButton = toast.querySelector('.realtime-toast__close');
+  closeButton?.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dismissRealtimeToast(toast);
+  });
+
+  const lifetime = Number(descriptor.duration) || REALTIME_TOAST_DURATION;
+  let removalTimer = window.setTimeout(() => dismissRealtimeToast(toast), lifetime);
+
+  toast.addEventListener('mouseenter', () => {
+    if (removalTimer) {
+      window.clearTimeout(removalTimer);
+      removalTimer = null;
+    }
+  });
+
+  toast.addEventListener('mouseleave', () => {
+    if (toast.dataset.dismissed === 'true') {
+      return;
+    }
+    if (!removalTimer) {
+      removalTimer = window.setTimeout(() => dismissRealtimeToast(toast), 1200);
+    }
+  });
 }
 
 function mapCourse(course) {
@@ -2367,65 +2614,172 @@ function canShowRealtimeNotification() {
   return hasNotificationSupport() && Notification.permission === 'granted';
 }
 
+function buildRealtimeNotificationDescriptor(event) {
+  if (!event || !event.type || !state.currentUser) {
+    return null;
+  }
+
+  const payload = event.payload || {};
+  const baseNotification = payload.notification || {};
+  const driverId = Number.isInteger(Number(payload.driverId)) ? Number(payload.driverId) : null;
+  const courseId = Number.isInteger(Number(payload.courseId)) ? Number(payload.courseId) : null;
+  const initialData =
+    baseNotification && typeof baseNotification.data === 'object' && baseNotification.data !== null
+      ? { ...baseNotification.data }
+      : {};
+
+  const descriptor = {
+    title: normalizeNotificationText(baseNotification.title || ''),
+    body: normalizeNotificationText(baseNotification.body || ''),
+    context: baseNotification.context || null,
+    audience: baseNotification.audience || null,
+    tag: typeof baseNotification.tag === 'string' ? baseNotification.tag : null,
+    duration: Number(baseNotification.duration) || null,
+    forceShow: Boolean(baseNotification.forceShow),
+    driverId,
+    courseId,
+    summary: payload.summary || null,
+    data: initialData,
+    action: payload.action || null,
+    eventType: event.type,
+  };
+
+  if (!descriptor.audience) {
+    if (event.type === 'messages:new') {
+      descriptor.audience = payload.senderType === 'driver' ? 'admin' : 'driver';
+    } else if (event.type === 'courses:changed') {
+      descriptor.audience = 'driver';
+    }
+  }
+
+  if (descriptor.audience === 'driver' && state.currentUser.role !== 'driver') {
+    return null;
+  }
+
+  if (descriptor.audience === 'admin' && !state.isAdmin) {
+    return null;
+  }
+
+  if (state.currentUser.role === 'driver' && driverId && driverId !== state.currentUser.id) {
+    return null;
+  }
+
+  if (event.type === 'messages:new') {
+    const senderType = payload.senderType;
+    if (state.currentUser.role === 'driver') {
+      if (senderType !== 'admin' || (driverId && driverId !== state.currentUser.id)) {
+        return null;
+      }
+    } else if (state.isAdmin) {
+      if (senderType !== 'driver') {
+        return null;
+      }
+    } else {
+      return null;
+    }
+  }
+
+  if (event.type === 'courses:changed' && state.currentUser.role !== 'driver' && !state.isAdmin) {
+    return null;
+  }
+
+  descriptor.context = descriptor.context || (event.type === 'messages:new' ? 'message' : 'course');
+
+  if (event.type === 'courses:changed') {
+    const action = descriptor.action || 'updated';
+
+    if (!descriptor.title) {
+      descriptor.title = getDefaultCourseNotificationTitle(action);
+    }
+
+    if (!descriptor.body) {
+      descriptor.body = buildCourseNotificationBodyFromSummary(descriptor.summary, action);
+    }
+
+    if (!descriptor.body) {
+      descriptor.body = NOTIFICATION_CTA_SUFFIX;
+    } else if (!descriptor.body.includes("Ouvrez l'application")) {
+      descriptor.body = `${descriptor.body} ${NOTIFICATION_CTA_SUFFIX}`;
+    }
+
+    if (descriptor.courseId) {
+      descriptor.data.courseId = descriptor.courseId;
+    }
+    if (descriptor.driverId) {
+      descriptor.data.driverId = descriptor.driverId;
+    }
+  } else if (event.type === 'messages:new') {
+    const senderType = payload.senderType;
+    const message = payload.message || {};
+
+    if (!descriptor.title) {
+      descriptor.title = getDefaultMessageNotificationTitle(senderType, message);
+    }
+
+    if (!descriptor.body) {
+      descriptor.body = buildDefaultMessageNotificationBody(senderType, message);
+    } else if (!descriptor.body.includes("Ouvrez l'application")) {
+      descriptor.body = `${descriptor.body} ${NOTIFICATION_MESSAGE_CTA_SUFFIX}`;
+    }
+
+    descriptor.context = 'message';
+
+    const messageDriverId = Number(message.driverId);
+    if (!descriptor.driverId && Number.isInteger(messageDriverId)) {
+      descriptor.driverId = messageDriverId;
+    }
+
+    if (descriptor.driverId) {
+      descriptor.data.driverId = descriptor.driverId;
+    }
+  }
+
+  descriptor.title = descriptor.title || 'Notification';
+  descriptor.body = descriptor.body ? normalizeNotificationText(descriptor.body) : '';
+  descriptor.duration = descriptor.duration || REALTIME_TOAST_DURATION;
+
+  if (!descriptor.tag) {
+    const identifier = descriptor.courseId || descriptor.driverId || Date.now();
+    descriptor.tag = `${event.type}-${identifier}`;
+  }
+
+  if (!Object.keys(descriptor.data).length) {
+    descriptor.data = undefined;
+  }
+
+  return descriptor;
+}
+
 function maybeShowRealtimeNotification(event) {
+  const descriptor = buildRealtimeNotificationDescriptor(event);
+  if (!descriptor) {
+    return;
+  }
+
+  displayInAppNotification(descriptor);
+
   if (!canShowRealtimeNotification()) {
     return;
   }
-  if (typeof document !== 'undefined' && !document.hidden) {
-    return;
-  }
-  if (!event || !event.type || !state.currentUser) {
-    return;
-  }
 
-  let title = '';
-  let body = '';
-
-  if (event.type === 'courses:changed' && state.currentUser.role === 'driver') {
-    if (event.payload?.driverId && event.payload.driverId !== state.currentUser.id) {
-      return;
-    }
-    const action = event.payload?.action;
-    if (['created', 'restored', 'reopened'].includes(action)) {
-      title = 'Nouvelle course disponible';
-      body = "Une nouvelle course vient d'être ajoutée à votre planning.";
-    } else if (action === 'updated') {
-      title = 'Course mise à jour';
-      body = 'Consultez les changements apportés à votre prochaine course.';
-    } else if (action === 'deleted') {
-      title = 'Course supprimée';
-      body = 'Une course a été retirée de votre planning.';
-    } else {
-      return;
-    }
-  } else if (event.type === 'messages:new') {
-    const { payload } = event;
-    const { senderType, driverId, message } = payload || {};
-    const text = typeof message?.body === 'string' ? message.body.trim() : '';
-    const preview = text.length > 140 ? `${text.slice(0, 137)}…` : text;
-
-    if (state.currentUser.role === 'driver') {
-      if (Number(driverId) !== state.currentUser.id || senderType !== 'admin') {
-        return;
-      }
-      title = "Nouveau message de l'administration";
-      body = preview || 'Un nouveau message est disponible.';
-    } else if (state.isAdmin && senderType === 'driver') {
-      const driver = state.adminDrivers.find((d) => d.id === Number(driverId));
-      const name = driver ? `${driver.firstName || ''} ${driver.lastName || ''}`.trim() || 'Un chauffeur' : 'Un chauffeur';
-      title = `${name} vous a écrit`;
-      body = preview || "Un message vient d'être reçu.";
-    } else {
-      return;
-    }
-  }
-
-  if (!title) {
+  const documentHidden = typeof document === 'undefined' || document.hidden;
+  if (!descriptor.forceShow && !documentHidden) {
     return;
   }
 
   try {
-    new Notification(title, body ? { body } : undefined);
+    const options = {};
+    if (descriptor.body) {
+      options.body = descriptor.body;
+    }
+    if (descriptor.tag) {
+      options.tag = descriptor.tag;
+      options.renotify = true;
+    }
+    if (descriptor.data) {
+      options.data = descriptor.data;
+    }
+    new Notification(descriptor.title || 'Notification', options);
   } catch (error) {
     console.warn("Impossible d'afficher la notification en temps réel", error);
   }
@@ -2436,6 +2790,13 @@ function handleGlobalKeyDown(event) {
     return;
   }
   let handled = false;
+  if (elements.realtimeToastRegion) {
+    const lastToast = elements.realtimeToastRegion.lastElementChild;
+    if (lastToast) {
+      dismissRealtimeToast(lastToast);
+      handled = true;
+    }
+  }
   if (state.driverPreferences.open) {
     closeDriverPreferences();
     handled = true;
