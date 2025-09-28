@@ -299,28 +299,42 @@ function setDefaultCourseDateTime() {
 }
 
 async function apiFetch(path, options = {}) {
+  const { headers: customHeaders = {}, skipAuthHandling = false, ...fetchOptions } = options;
+
   const headers = {
     'Content-Type': 'application/json',
-    ...(options.headers || {}),
+    ...customHeaders,
   };
 
   if (state.currentUser?.role === 'admin' && state.currentUser?.token) {
     headers['X-Admin-Token'] = state.currentUser.token;
+  } else if (state.currentUser?.role === 'driver' && state.currentUser?.token) {
+    headers['X-Driver-Token'] = state.currentUser.token;
   }
 
   const config = {
+    ...fetchOptions,
     headers,
-    ...options,
   };
 
   const response = await fetch(`${API_BASE}${path}`, config);
-  if (!response.ok) {
-    const errorPayload = await response.json().catch(() => ({}));
-    throw new Error(errorPayload.message || 'Une erreur est survenue');
-  }
 
   if (response.status === 204) {
     return null;
+  }
+
+  if (response.status === 401 && !skipAuthHandling) {
+    const errorPayload = await response.json().catch(() => ({}));
+    const message = errorPayload.message || 'Votre session a expiré. Veuillez vous reconnecter.';
+    if (state.currentUser) {
+      resetAppToLogin({ message });
+    }
+    throw new Error(message);
+  }
+
+  if (!response.ok) {
+    const errorPayload = await response.json().catch(() => ({}));
+    throw new Error(errorPayload.message || 'Une erreur est survenue');
   }
 
   return response.json();
@@ -642,6 +656,7 @@ async function loginAsDriver(driver, options = {}) {
     initialTab = 'today',
     displayPreferences = null,
     preferencesTab = 'today',
+    sessionToken = null,
   } = options;
   const normalizedDriver = normalizeDriver(driver);
 
@@ -652,28 +667,78 @@ async function loginAsDriver(driver, options = {}) {
     return;
   }
 
+  let resolvedDriver = normalizedDriver;
+  let token = sessionToken || null;
+
+  if (!skipPasswordCheck) {
+    try {
+      const result = await apiFetch('/drivers/login', {
+        method: 'POST',
+        body: JSON.stringify({ driverId: normalizedDriver.id }),
+      });
+
+      resolvedDriver = normalizeDriver({
+        id: result.id,
+        first_name: result.firstName,
+        last_name: result.lastName,
+        email: result.email,
+        phone: result.phone,
+        has_password: result.hasPassword,
+      });
+      token = result.token || null;
+    } catch (error) {
+      alert(error.message);
+      return;
+    }
+  }
+
+  await activateDriverSession(resolvedDriver, {
+    token,
+    initialTab,
+    displayPreferences,
+    preferencesTab,
+  });
+}
+
+async function activateDriverSession(driver, options = {}) {
+  const {
+    token = null,
+    initialTab = 'today',
+    displayPreferences = null,
+    preferencesTab = 'today',
+  } = options;
+
+  const normalizedDriver = normalizeDriver(driver);
+
   state.currentUser = {
     ...normalizedDriver,
     role: 'driver',
     initials: computeInitials(normalizedDriver.firstName, normalizedDriver.lastName),
+    token: token || null,
   };
+
   state.isAdmin = false;
   updateDriverCreationAvailability();
-  elements.driverNameDisplay.textContent = `${normalizedDriver.firstName} ${normalizedDriver.lastName}`;
+  if (elements.driverNameDisplay) {
+    elements.driverNameDisplay.textContent = `${normalizedDriver.firstName} ${normalizedDriver.lastName}`;
+  }
   hideElement(elements.loginPage);
   showElement(elements.driverDashboard);
   hideElement(elements.adminDashboard);
   closeDriverPasswordModal();
+
   state.activeDriverTab = initialTab;
   state.driverPreferences.open = false;
   setDriverPreferencesTab(preferencesTab);
   syncDriverPreferencesPanel();
+
   if (displayPreferences) {
     state.displayPreferences = {
       ...state.displayPreferences,
       ...displayPreferences,
     };
   }
+
   applyDisplayPreferences();
   switchTab(initialTab);
   await loadDriverCourses();
@@ -758,8 +823,7 @@ async function processDriverPassword(password, { inline = false } = {}) {
       has_password: result.hasPassword ?? pending.hasPassword,
     });
 
-    closeDriverPasswordModal();
-    await loginAsDriver(normalized, { skipPasswordCheck: true });
+    await loginAsDriver(normalized, { skipPasswordCheck: true, sessionToken: result.token });
   } catch (error) {
     state.driverPasswordError = error.message;
     if (inline && elements.driverPasswordError) {
@@ -1316,18 +1380,8 @@ function renderAdminManagement() {
   listContainer.appendChild(list);
 }
 
-async function logout(event) {
-  if (event?.preventDefault) {
-    event.preventDefault();
-  }
-
-  if (state.currentUser?.role === 'admin' && state.currentUser?.token) {
-    try {
-      await apiFetch('/admins/logout', { method: 'POST' });
-    } catch (error) {
-      console.warn('Erreur lors de la fermeture de session administrateur', error);
-    }
-  }
+function resetAppToLogin({ message, silent = false } = {}) {
+  const wasAuthenticated = Boolean(state.currentUser);
 
   state.currentUser = null;
   state.isAdmin = false;
@@ -1361,8 +1415,12 @@ async function logout(event) {
   resetAdminEditState();
   resetMessagingState();
   updateDriverCreationAvailability();
-  elements.lastnameInput.value = '';
-  elements.driverList.innerHTML = '';
+  if (elements.lastnameInput) {
+    elements.lastnameInput.value = '';
+  }
+  if (elements.driverList) {
+    elements.driverList.innerHTML = '';
+  }
   hideElement(elements.driverDashboard);
   hideElement(elements.adminDashboard);
   hideElement(elements.courseModal);
@@ -1408,6 +1466,39 @@ async function logout(event) {
   showElement(elements.loginPage);
   switchTab('today');
   clearPersistedSession();
+
+  if (message && !silent && wasAuthenticated) {
+    setTimeout(() => {
+      alert(message);
+    }, 50);
+  }
+}
+
+async function logout(event) {
+  if (event?.preventDefault) {
+    event.preventDefault();
+  }
+
+  const isAdmin = state.currentUser?.role === 'admin' && state.currentUser?.token;
+  const isDriver = state.currentUser?.role === 'driver' && state.currentUser?.token;
+
+  if (isAdmin) {
+    try {
+      await apiFetch('/admins/logout', { method: 'POST', skipAuthHandling: true });
+    } catch (error) {
+      console.warn('Erreur lors de la fermeture de session administrateur', error);
+    }
+  }
+
+  if (isDriver) {
+    try {
+      await apiFetch('/drivers/logout', { method: 'POST', skipAuthHandling: true });
+    } catch (error) {
+      console.warn('Erreur lors de la fermeture de session chauffeur', error);
+    }
+  }
+
+  resetAppToLogin();
 }
 
 function switchTab(requestedTab) {
@@ -4877,6 +4968,7 @@ function persistSessionState() {
       lastName: state.currentUser.lastName,
       hasPassword: state.currentUser.hasPassword || false,
     };
+    session.token = state.currentUser.token || null;
   } else if (state.currentUser.role === 'admin') {
     session.user = {
       id: state.currentUser.id,
@@ -4964,11 +5056,53 @@ function handleRealtimeEvent(event) {
     case 'messages:read':
       processMessageReadEvent(payload);
       break;
+    case 'sessions:driver:revoked':
+      handleDriverSessionRevoked(payload);
+      break;
+    case 'sessions:admin:revoked':
+      handleAdminSessionRevoked(payload);
+      break;
     default:
       break;
   }
 
   maybeShowRealtimeNotification(event);
+}
+
+function handleDriverSessionRevoked(payload) {
+  if (state.currentUser?.role !== 'driver') {
+    return;
+  }
+
+  const revokedToken = payload?.token || null;
+  const targetDriverId = Number(payload?.driverId);
+  const hasMatchingToken = Boolean(revokedToken && state.currentUser.token && state.currentUser.token === revokedToken);
+  const matchesById =
+    !revokedToken && !state.currentUser.token && Number.isInteger(targetDriverId) && targetDriverId === state.currentUser.id;
+
+  if (hasMatchingToken || matchesById) {
+    resetAppToLogin({
+      message: 'Votre session chauffeur a été ouverte sur un autre appareil. Veuillez vous reconnecter.',
+    });
+  }
+}
+
+function handleAdminSessionRevoked(payload) {
+  if (state.currentUser?.role !== 'admin') {
+    return;
+  }
+
+  const revokedToken = payload?.token || null;
+  const targetAdminId = Number(payload?.adminId);
+  const hasMatchingToken = Boolean(revokedToken && state.currentUser.token && state.currentUser.token === revokedToken);
+  const matchesById =
+    !revokedToken && !state.currentUser.token && Number.isInteger(targetAdminId) && targetAdminId === state.currentUser.id;
+
+  if (hasMatchingToken || matchesById) {
+    resetAppToLogin({
+      message: 'Votre session administrateur a été ouverte sur un autre appareil. Veuillez vous reconnecter.',
+    });
+  }
 }
 
 function setupRealtimeUpdates() {
@@ -5067,11 +5201,23 @@ async function restoreSessionFromStorage() {
     }
   }
 
-  if (saved.role === 'driver' && saved.user?.id) {
+  if (saved.role === 'driver' && saved.user?.id && saved.token) {
     try {
-      const driver = await apiFetch(`/drivers/${saved.user.id}`);
-      await loginAsDriver(driver, {
-        skipPasswordCheck: true,
+      const response = await fetch(`${API_BASE}/drivers/session`, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Driver-Token': saved.token,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Session chauffeur invalide');
+      }
+
+      const driver = await response.json();
+
+      await activateDriverSession(driver, {
+        token: saved.token,
         initialTab: saved.activeDriverTab || 'today',
         displayPreferences: saved.displayPreferences || {},
         preferencesTab: saved.driverPreferencesTab || 'today',
