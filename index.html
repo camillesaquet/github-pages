@@ -180,7 +180,7 @@
 
     <div id="driver-dashboard" class="min-h-screen hidden">
       <header class="bg-green-600 text-white shadow-md">
-        <div class="container mx-auto px-4 py-3 flex justify-between items-center">
+        <div class="app-shell py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 class="text-xl font-bold">Agri Holann</h1>
             <p id="driver-name" class="text-sm opacity-90">Jean Dupont</p>
@@ -194,7 +194,7 @@
         </div>
       </header>
 
-      <main class="container mx-auto px-4 py-6">
+      <main class="app-shell py-6">
         <div class="flex border-b border-gray-200 mb-6">
           <button id="today-tab" class="tab-button tab-button--active">Aujourd'hui</button>
           <button id="week-tab" class="tab-button">Semaine</button>
@@ -375,7 +375,7 @@
 
     <div id="admin-dashboard" class="min-h-screen hidden">
       <header class="bg-blue-600 text-white shadow-md">
-        <div class="container mx-auto px-4 py-3 flex justify-between items-center">
+        <div class="app-shell py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 class="text-xl font-bold">Agri Holann - Administration</h1>
             <p class="text-sm opacity-90">
@@ -392,7 +392,7 @@
         </div>
       </header>
 
-      <main class="container mx-auto px-4 py-6 space-y-6">
+      <main class="app-shell py-6 space-y-6">
         <div class="flex border-b border-gray-200">
           <button id="admin-planning-tab" class="admin-tab admin-tab--active">Planning</button>
           <button id="admin-archives-tab" class="admin-tab">Archives</button>
@@ -437,66 +437,66 @@
           </section>
 
           <section class="bg-white p-4 rounded-lg shadow-sm space-y-4">
-            <div class="grid grid-cols-1 xl:grid-cols-4 gap-4">
-              <div>
-                <label class="form-label" for="admin-driver-select">Chauffeur</label>
-                <select id="admin-driver-select" class="form-input">
-                  <option value="all">Tous les chauffeurs</option>
-                </select>
-              </div>
-              <div>
-                <label class="form-label" for="admin-status-filter">Statut</label>
-                <select id="admin-status-filter" class="form-input">
-                  <option value="all">Tous les statuts</option>
-                  <option value="pending">À faire</option>
-                  <option value="completed">Terminées</option>
-                  <option value="issue_reported">Signalements</option>
-                </select>
-              </div>
-              <div>
-                <label class="form-label" for="admin-merchandise-filter">Marchandise</label>
-                <select id="admin-merchandise-filter" class="form-input">
-                  <option value="all">Toutes</option>
-                  <option value="Céréales">Céréales</option>
-                  <option value="Légumes">Légumes</option>
-                  <option value="Fruits">Fruits</option>
-                  <option value="Engrais">Engrais</option>
-                  <option value="Autre">Autre</option>
-                </select>
-              </div>
-              <div>
-                <label class="form-label" for="admin-search-filter">Recherche</label>
-                <input
-                  type="search"
-                  id="admin-search-filter"
-                  class="form-input"
-                  placeholder="Départ, destination, commentaire..."
-                />
+            <div class="admin-pane-nav" role="tablist" aria-label="Affichage des options administrateur">
+              <button type="button" class="admin-subtab admin-subtab--active" data-admin-pane="core" role="tab">
+                <i class="fas fa-sliders-h mr-2"></i>Filtres essentiels
+              </button>
+              <button type="button" class="admin-subtab" data-admin-pane="advanced" role="tab">
+                <i class="fas fa-layer-group mr-2"></i>Options avancées
+              </button>
+              <button type="button" class="admin-subtab" data-admin-pane="tools" role="tab">
+                <i class="fas fa-toolbox mr-2"></i>Outils & exports
+              </button>
+            </div>
+
+            <div id="admin-pane-core" class="admin-pane admin-pane--active" role="tabpanel">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label class="form-label" for="admin-driver-select">Chauffeur</label>
+                  <select id="admin-driver-select" class="form-input">
+                    <option value="all">Tous les chauffeurs</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label" for="admin-status-filter">Statut</label>
+                  <select id="admin-status-filter" class="form-input">
+                    <option value="all">Tous les statuts</option>
+                    <option value="pending">À faire</option>
+                    <option value="completed">Terminées</option>
+                    <option value="issue_reported">Signalements</option>
+                  </select>
+                </div>
+                <div class="sm:col-span-2">
+                  <p class="text-sm text-gray-500 leading-relaxed">
+                    Ajustez rapidement la liste des courses. Les autres outils restent disponibles dans les onglets
+                    “Options avancées” et “Outils & exports”.
+                  </p>
+                </div>
               </div>
             </div>
 
-            <div class="grid grid-cols-1 xl:grid-cols-4 gap-4 items-end">
-              <div>
-                <span class="form-label">Période</span>
-                <div class="flex flex-wrap gap-2 mt-2">
-                  <button type="button" class="filter-chip" data-admin-range="day">Aujourd'hui</button>
-                  <button type="button" class="filter-chip" data-admin-range="week">7 jours</button>
-                  <button type="button" class="filter-chip" data-admin-range="month">30 jours</button>
-                  <button type="button" class="filter-chip" data-admin-range="custom">Personnalisé</button>
-                  <button type="button" class="filter-chip" data-admin-range="all">Tout afficher</button>
-                </div>
-              </div>
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div id="admin-pane-advanced" class="admin-pane hidden" role="tabpanel" aria-hidden="true">
+              <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 <div>
-                  <label class="form-label" for="admin-from">Du</label>
-                  <input type="date" id="admin-from" class="form-input" />
+                  <label class="form-label" for="admin-merchandise-filter">Marchandise</label>
+                  <select id="admin-merchandise-filter" class="form-input">
+                    <option value="all">Toutes</option>
+                    <option value="Céréales">Céréales</option>
+                    <option value="Légumes">Légumes</option>
+                    <option value="Fruits">Fruits</option>
+                    <option value="Engrais">Engrais</option>
+                    <option value="Autre">Autre</option>
+                  </select>
                 </div>
                 <div>
-                  <label class="form-label" for="admin-to">Au</label>
-                  <input type="date" id="admin-to" class="form-input" />
+                  <label class="form-label" for="admin-search-filter">Recherche</label>
+                  <input
+                    type="search"
+                    id="admin-search-filter"
+                    class="form-input"
+                    placeholder="Départ, destination, commentaire..."
+                  />
                 </div>
-              </div>
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label class="form-label" for="admin-issue-filter">Problèmes</label>
                   <select id="admin-issue-filter" class="form-input">
@@ -513,20 +513,48 @@
                     <option value="without">Sans photo</option>
                   </select>
                 </div>
+                <div class="xl:col-span-2">
+                  <span class="form-label">Période</span>
+                  <div class="flex flex-wrap gap-2 mt-2">
+                    <button type="button" class="filter-chip" data-admin-range="day">Aujourd'hui</button>
+                    <button type="button" class="filter-chip" data-admin-range="week">7 jours</button>
+                    <button type="button" class="filter-chip" data-admin-range="month">30 jours</button>
+                    <button type="button" class="filter-chip" data-admin-range="custom">Personnalisé</button>
+                    <button type="button" class="filter-chip" data-admin-range="all">Tout afficher</button>
+                  </div>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 xl:col-span-2">
+                  <div>
+                    <label class="form-label" for="admin-from">Du</label>
+                    <input type="date" id="admin-from" class="form-input" />
+                  </div>
+                  <div>
+                    <label class="form-label" for="admin-to">Au</label>
+                    <input type="date" id="admin-to" class="form-input" />
+                  </div>
+                </div>
               </div>
-              <div class="flex flex-wrap gap-2 justify-end">
-                <button id="admin-reset-filters" class="btn-tertiary text-sm">
-                  <i class="fas fa-undo mr-1"></i> Réinitialiser
-                </button>
-                <button id="admin-export-pdf" class="btn-secondary text-sm">
-                  <i class="fas fa-file-pdf mr-1"></i> Export PDF
-                </button>
-                <button id="admin-export-excel" class="btn-secondary text-sm">
-                  <i class="fas fa-file-excel mr-1"></i> Export Excel
-                </button>
-                <button id="new-course-admin" class="btn-admin">
-                  <i class="fas fa-plus mr-1"></i> Nouvelle course
-                </button>
+            </div>
+
+            <div id="admin-pane-tools" class="admin-pane hidden" role="tabpanel" aria-hidden="true">
+              <div class="space-y-4">
+                <p class="text-sm text-gray-500 leading-relaxed">
+                  Retrouver ici les actions ponctuelles pour partager ou remettre à zéro le planning.
+                </p>
+                <div class="flex flex-wrap gap-2">
+                  <button id="admin-reset-filters" class="btn-tertiary text-sm">
+                    <i class="fas fa-undo mr-1"></i> Réinitialiser
+                  </button>
+                  <button id="admin-export-pdf" class="btn-secondary text-sm">
+                    <i class="fas fa-file-pdf mr-1"></i> Export PDF
+                  </button>
+                  <button id="admin-export-excel" class="btn-secondary text-sm">
+                    <i class="fas fa-file-excel mr-1"></i> Export Excel
+                  </button>
+                  <button id="new-course-admin" class="btn-admin">
+                    <i class="fas fa-plus mr-1"></i> Nouvelle course
+                  </button>
+                </div>
               </div>
             </div>
           </section>

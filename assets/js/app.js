@@ -43,6 +43,7 @@ const state = {
   adminFilters: { ...DEFAULT_ADMIN_FILTERS },
   archiveFilters: { ...DEFAULT_ARCHIVE_FILTERS },
   adminView: 'planning',
+  adminOptionsPane: 'core',
   currentCourseId: null,
   photoDataUrl: null,
   pendingCompletionComments: '',
@@ -134,6 +135,8 @@ const elements = {
   noActivity: document.getElementById('no-activity'),
   newCourseAdminBtn: document.getElementById('new-course-admin'),
   adminRangeButtons: document.querySelectorAll('[data-admin-range]'),
+  adminPaneButtons: document.querySelectorAll('[data-admin-pane]'),
+  adminPanes: document.querySelectorAll('.admin-pane'),
   adminStatusFilter: document.getElementById('admin-status-filter'),
   adminMerchandiseFilter: document.getElementById('admin-merchandise-filter'),
   adminSearchFilter: document.getElementById('admin-search-filter'),
@@ -815,6 +818,7 @@ function setAdminSession(admin, options = {}) {
   state.driverPreferences.open = false;
   setDriverPreferencesTab(preferencesTab);
   syncDriverPreferencesPanel();
+  state.adminOptionsPane = options.adminOptionsPane || state.adminOptionsPane || 'core';
 
   hideElement(elements.loginPage);
   hideElement(elements.driverDashboard);
@@ -839,6 +843,7 @@ function setAdminSession(admin, options = {}) {
   resetEmailSettingsStatus();
   renderDriverManagementPanel();
   renderSettingsTabs();
+  renderAdminOptionsPane();
 
   switchAdminView(view);
   updateAdminRangeButtons();
@@ -1341,6 +1346,7 @@ async function logout(event) {
     activeTab: 'email',
   };
   state.adminManagementView = 'list';
+  state.adminOptionsPane = 'core';
   state.driverPasswordManagement = { drivers: [], loading: false, editingDriverId: null };
   state.driverManagement.expanded = false;
   state.driverManagement.loading = false;
@@ -1395,6 +1401,7 @@ async function logout(event) {
   }
   renderDriverManagementPanel();
   renderSettingsTabs();
+  renderAdminOptionsPane();
   state.adminView = 'planning';
   updateAdminRangeButtons();
   updateArchivePeriodInputs();
@@ -1462,6 +1469,7 @@ function switchAdminView(view) {
 
   if (view === 'planning') {
     updateAdminRangeButtons();
+    renderAdminOptionsPane();
   }
 
   if (view === 'archives') {
@@ -1496,6 +1504,46 @@ function renderDriverManagementPanel() {
     elements.driverManagementToggle.textContent = 'Afficher la gestion des chauffeurs';
     elements.driverManagementToggle.setAttribute('aria-expanded', 'false');
   }
+}
+
+function renderAdminOptionsPane() {
+  if (!elements.adminPaneButtons?.length || !elements.adminPanes?.length) {
+    return;
+  }
+
+  const activePane = state.adminOptionsPane || 'core';
+
+  elements.adminPaneButtons.forEach((button) => {
+    const paneKey = button.getAttribute('data-admin-pane') || 'core';
+    const controlsId = `admin-pane-${paneKey}`;
+    const isActive = paneKey === activePane;
+    button.classList.toggle('admin-subtab--active', isActive);
+    button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    button.setAttribute('aria-controls', controlsId);
+    button.setAttribute('tabindex', isActive ? '0' : '-1');
+  });
+
+  elements.adminPanes.forEach((panel) => {
+    const paneKey = panel.id?.replace('admin-pane-', '') || panel.getAttribute('data-admin-pane') || 'core';
+    const isActive = paneKey === activePane;
+    if (isActive) {
+      panel.classList.add('admin-pane--active');
+      panel.classList.remove('hidden');
+      panel.removeAttribute('aria-hidden');
+    } else {
+      panel.classList.remove('admin-pane--active');
+      panel.classList.add('hidden');
+      panel.setAttribute('aria-hidden', 'true');
+    }
+  });
+}
+
+function setAdminOptionsPane(pane) {
+  const normalized = pane || 'core';
+  if (state.adminOptionsPane !== normalized) {
+    state.adminOptionsPane = normalized;
+  }
+  renderAdminOptionsPane();
 }
 
 function updateAdminRangeButtons() {
@@ -4840,6 +4888,7 @@ function persistSessionState() {
     };
     session.token = state.currentUser.token || null;
     session.adminView = state.adminView;
+    session.adminOptionsPane = state.adminOptionsPane || 'core';
     session.settingsTab = state.settings?.activeTab || 'email';
     session.adminManagementView = state.adminManagementView || 'list';
     session.adminFilters = { ...state.adminFilters };
@@ -5007,6 +5056,7 @@ async function restoreSessionFromStorage() {
         archiveFilters: saved.archiveFilters || {},
         displayPreferences: saved.displayPreferences || {},
         driverPreferencesTab: saved.driverPreferencesTab || 'today',
+        adminOptionsPane: saved.adminOptionsPane || 'core',
       });
       return;
     } catch (error) {
@@ -5083,6 +5133,15 @@ function registerEventListeners() {
   elements.messagingForm?.addEventListener('submit', handleMessagingSubmit);
   elements.messagingDriverPicker?.addEventListener('change', handleMessagingDriverChange);
   elements.messagingThreadList?.addEventListener('click', handleMessagingThreadClick);
+  if (elements.adminPaneButtons?.length) {
+    elements.adminPaneButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const paneKey = button.getAttribute('data-admin-pane') || 'core';
+        setAdminOptionsPane(paneKey);
+        persistSessionState();
+      });
+    });
+  }
   elements.adminDriverSelect.addEventListener('change', () => {
     state.adminFilters.driverId = elements.adminDriverSelect.value || 'all';
     loadAdminCourses();
@@ -5241,6 +5300,7 @@ function init() {
   updateAdminRangeButtons();
   updateArchivePeriodInputs();
   renderDriverManagementPanel();
+  renderAdminOptionsPane();
   renderSettingsTabs();
   applyDisplayPreferences();
   setDriverPreferencesTab(state.driverPreferences.activeTab);
