@@ -21,6 +21,7 @@ const SUPER_ADMIN_IDENTIFIER = 'lsaquet';
 const SUPER_ADMIN_FIRST_NAME = 'Laurent';
 const SUPER_ADMIN_LAST_NAME = 'Saquet';
 const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const DRIVER_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const ADMIN_CREATABLE_ROLES = ['manager', 'standard'];
 const ADMIN_ROLES = new Set(['superadmin', ...ADMIN_CREATABLE_ROLES]);
 const DEFAULT_COMPLETION_EMAIL = process.env.DEFAULT_COMPLETION_EMAIL || 'laurent.saquet@agriholann.com';
@@ -105,7 +106,17 @@ const COURSE_STATUSES = new Set([
   COURSE_STATUS_ISSUE_REPORTED,
 ]);
 
+const NOTIFICATION_DATE_FORMATTER = new Intl.DateTimeFormat('fr-FR', {
+  dateStyle: 'short',
+  timeStyle: 'short',
+});
+const DRIVER_NOTIFICATION_CTA = "Ouvrez l'application pour consulter les détails.";
+const MESSAGE_NOTIFICATION_CTA = "Ouvrez l'application pour lire et répondre.";
+
 const activeAdminSessions = new Map();
+const adminSessionIndex = new Map();
+const activeDriverSessions = new Map();
+const driverSessionIndex = new Map();
 const sseClients = new Set();
 
 function parseBoolean(value) {
@@ -179,6 +190,205 @@ function mapCourseRow(row, options = {}) {
   }
 
   return mapped;
+}
+
+function sanitizeNotificationText(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  return String(value).replace(/\s+/g, ' ').trim();
+}
+
+function truncateNotificationText(value, maxLength = 160) {
+  const text = sanitizeNotificationText(value);
+  if (!text) {
+    return '';
+  }
+  if (text.length <= maxLength) {
+    return text;
+  }
+  const safeLength = Math.max(0, maxLength - 1);
+  return `${text.slice(0, safeLength)}…`;
+}
+
+function formatNotificationDateTime(value) {
+  if (!value) {
+    return '';
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  try {
+    return NOTIFICATION_DATE_FORMATTER.format(date);
+  } catch (error) {
+    return '';
+  }
+}
+
+function buildCourseNotificationSummary(course) {
+  if (!course) {
+    return null;
+  }
+  return {
+    id: Number(course.id) || null,
+    driverId: Number(course.driver_id) || null,
+    dateTime: course.date_time || null,
+    departure: course.departure || null,
+    destination: course.destination || null,
+    merchandise: course.merchandise || null,
+    status: course.status || null,
+    archivedAt: course.archived_at || null,
+    issueReportedAt: course.issue_reported_at || null,
+    issueReportComment: course.issue_report_comment || null,
+  };
+}
+
+function buildCourseNotificationMessage(action, course) {
+  if (!course) {
+    return null;
+  }
+
+  const summary = buildCourseNotificationSummary(course);
+  const segments = [];
+
+  if (summary?.departure || summary?.destination) {
+    const departure = summary?.departure ? sanitizeNotificationText(summary.departure) : '';
+    const destination = summary?.destination ? sanitizeNotificationText(summary.destination) : '';
+    const route = [departure, destination].filter(Boolean).join(' → ');
+    if (route) {
+      segments.push(route);
+    }
+  }
+
+  const formattedDate = formatNotificationDateTime(summary?.dateTime);
+  if (formattedDate) {
+    segments.push(`Prévue ${formattedDate}`);
+  }
+
+  let title = '';
+  let mainText = '';
+
+  switch (action) {
+    case 'created':
+    case 'restored':
+    case 'reopened':
+      title = 'Nouvelle course disponible';
+      mainText = 'Une nouvelle course vient d’être planifiée pour vous.';
+      break;
+    case 'updated':
+      title = 'Course mise à jour';
+      mainText = 'Des modifications ont été apportées à l’une de vos courses.';
+      break;
+    case 'deleted':
+      title = 'Course annulée';
+      mainText = 'Cette course a été retirée de votre planning.';
+      break;
+    case 'archived':
+      title = 'Course archivée';
+      mainText = 'Cette course a été archivée par l’administration.';
+      break;
+    case 'completed':
+      title = 'Course validée';
+      mainText = 'La course a été marquée comme terminée.';
+      break;
+    case 'issue_reported': {
+      title = 'Problème signalé';
+      const comment = truncateNotificationText(summary?.issueReportComment, 120);
+      mainText = comment ? `Problème signalé : ${comment}` : 'Un problème a été signalé sur cette course.';
+      break;
+    }
+    default:
+      title = 'Mise à jour de votre planning';
+      mainText = 'Votre planning vient d’être actualisé.';
+      break;
+  }
+
+  const bodyParts = [];
+  if (segments.length) {
+    bodyParts.push(segments.join(' · '));
+  }
+  if (mainText) {
+    bodyParts.push(mainText);
+  }
+  bodyParts.push(DRIVER_NOTIFICATION_CTA);
+
+  const body = sanitizeNotificationText(bodyParts.filter(Boolean).join(' '));
+  const titleText = sanitizeNotificationText(title) || 'Notification';
+
+  const notification = {
+    title: titleText,
+    body,
+    context: 'course',
+    audience: 'driver',
+    tag: `course-${summary?.id || course.id || 'update'}-${action || 'updated'}`,
+  };
+
+  if (summary?.id || summary?.driverId) {
+    notification.data = {};
+    if (summary?.id) {
+      notification.data.courseId = summary.id;
+    }
+    if (summary?.driverId) {
+      notification.data.driverId = summary.driverId;
+    }
+  }
+
+  return notification;
+}
+
+function buildMessageNotificationPayload(senderType, message) {
+  if (!message) {
+    return null;
+  }
+
+  const driverId = Number(message.driverId ?? message.driver_id ?? message.driverID) || null;
+  const snippet = truncateNotificationText(message.body, 140);
+  const baseTag = driverId ? `message-${driverId}` : 'message-thread';
+  const tag = message.id ? `${baseTag}-${message.id}` : `${baseTag}-${Date.now()}`;
+
+  if (senderType === 'admin') {
+    const segments = [];
+    if (snippet) {
+      segments.push(snippet);
+    }
+    segments.push(MESSAGE_NOTIFICATION_CTA);
+
+    const notification = {
+      title: "Nouveau message de l'administration",
+      body: sanitizeNotificationText(segments.join(' ')),
+      context: 'message',
+      audience: 'driver',
+      tag,
+    };
+
+    if (driverId) {
+      notification.data = { driverId };
+    }
+
+    return notification;
+  }
+
+  const senderLabel = sanitizeNotificationText(message.senderLabel || 'Un chauffeur');
+  const segments = [];
+  if (snippet) {
+    segments.push(snippet);
+  }
+  segments.push(MESSAGE_NOTIFICATION_CTA);
+
+  const notification = {
+    title: `${senderLabel} vous a écrit`,
+    body: sanitizeNotificationText(segments.join(' ')),
+    context: 'message',
+    audience: 'admin',
+    tag,
+  };
+
+  if (driverId) {
+    notification.data = { driverId };
+  }
+
+  return notification;
 }
 
 function buildCourseQuery(filters = {}) {
@@ -314,11 +524,52 @@ function generateAdminSessionToken() {
 }
 
 function createAdminSession(admin) {
+  const adminId = admin.id;
+  const previousToken = adminSessionIndex.get(adminId);
+  if (previousToken) {
+    activeAdminSessions.delete(previousToken);
+    adminSessionIndex.delete(adminId);
+    broadcastEvent('sessions:admin:revoked', {
+      adminId,
+      token: previousToken,
+    });
+  }
+
   const token = generateAdminSessionToken();
   activeAdminSessions.set(token, {
-    adminId: admin.id,
+    adminId,
     expiresAt: Date.now() + ADMIN_SESSION_TTL_MS,
   });
+  adminSessionIndex.set(adminId, token);
+  return token;
+}
+
+function generateDriverSessionToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+function createDriverSession(driver) {
+  const driverId = driver?.id ?? driver;
+  if (!driverId) {
+    throw new Error('Identifiant chauffeur manquant pour la création de session.');
+  }
+
+  const previousToken = driverSessionIndex.get(driverId);
+  if (previousToken) {
+    activeDriverSessions.delete(previousToken);
+    driverSessionIndex.delete(driverId);
+    broadcastEvent('sessions:driver:revoked', {
+      driverId,
+      token: previousToken,
+    });
+  }
+
+  const token = generateDriverSessionToken();
+  activeDriverSessions.set(token, {
+    driverId,
+    expiresAt: Date.now() + DRIVER_SESSION_TTL_MS,
+  });
+  driverSessionIndex.set(driverId, token);
   return token;
 }
 
@@ -365,6 +616,7 @@ async function enforceAdminSession(req, res, options = {}) {
 
   if (session.expiresAt <= Date.now()) {
     activeAdminSessions.delete(token);
+    adminSessionIndex.delete(session.adminId);
     res.status(401).json({ message: 'Session administrateur expirée.' });
     return null;
   }
@@ -376,6 +628,7 @@ async function enforceAdminSession(req, res, options = {}) {
 
   if (!admin) {
     activeAdminSessions.delete(token);
+    adminSessionIndex.delete(session.adminId);
     res.status(401).json({ message: 'Compte administrateur introuvable.' });
     return null;
   }
@@ -397,8 +650,41 @@ async function enforceAdminSession(req, res, options = {}) {
 
   session.expiresAt = Date.now() + ADMIN_SESSION_TTL_MS;
   activeAdminSessions.set(token, session);
+  adminSessionIndex.set(admin.id, token);
 
   return { admin, token };
+}
+
+async function enforceDriverSession(req, res, options = {}) {
+  const token = req.headers['x-driver-token'];
+  if (!token) {
+    res.status(401).json({ message: 'Authentification chauffeur requise.' });
+    return null;
+  }
+
+  const session = activeDriverSessions.get(token);
+  if (!session) {
+    res.status(401).json({ message: 'Session chauffeur invalide.' });
+    return null;
+  }
+
+  if (session.expiresAt <= Date.now()) {
+    activeDriverSessions.delete(token);
+    driverSessionIndex.delete(session.driverId);
+    res.status(401).json({ message: 'Session chauffeur expirée.' });
+    return null;
+  }
+
+  if (options.requireDriverId && session.driverId !== options.requireDriverId) {
+    res.status(403).json({ message: 'Accès refusé pour ce chauffeur.' });
+    return null;
+  }
+
+  session.expiresAt = Date.now() + DRIVER_SESSION_TTL_MS;
+  activeDriverSessions.set(token, session);
+  driverSessionIndex.set(session.driverId, token);
+
+  return { driverId: session.driverId, token };
 }
 
 async function hashPassword(password) {
@@ -1843,8 +2129,24 @@ app.post('/api/admins/login', async (req, res) => {
 
 app.post('/api/admins/logout', (req, res) => {
   const token = req.headers['x-admin-token'];
-  if (token && activeAdminSessions.has(token)) {
-    activeAdminSessions.delete(token);
+  if (token) {
+    const session = activeAdminSessions.get(token);
+    if (session) {
+      activeAdminSessions.delete(token);
+      adminSessionIndex.delete(session.adminId);
+    }
+  }
+  res.status(204).send();
+});
+
+app.post('/api/drivers/logout', (req, res) => {
+  const token = req.headers['x-driver-token'];
+  if (token) {
+    const session = activeDriverSessions.get(token);
+    if (session) {
+      activeDriverSessions.delete(token);
+      driverSessionIndex.delete(session.driverId);
+    }
   }
   res.status(204).send();
 });
@@ -1915,6 +2217,42 @@ app.get('/api/admins/session', async (req, res) => {
   }
 });
 
+app.get('/api/drivers/session', async (req, res) => {
+  try {
+    const sessionInfo = await enforceDriverSession(req, res);
+    if (!sessionInfo) {
+      return;
+    }
+
+    const driver = await db.get(
+      `SELECT id, first_name, last_name, email, phone, password_hash
+         FROM drivers WHERE id = ?`,
+      [sessionInfo.driverId]
+    );
+
+    if (!driver) {
+      activeDriverSessions.delete(sessionInfo.token);
+      driverSessionIndex.delete(sessionInfo.driverId);
+      res.status(401).json({ message: 'Compte chauffeur introuvable.' });
+      return;
+    }
+
+    const hasPassword = Boolean(driver.password_hash && driver.password_hash.trim());
+
+    res.json({
+      id: driver.id,
+      firstName: driver.first_name,
+      lastName: driver.last_name,
+      email: driver.email,
+      phone: driver.phone,
+      hasPassword,
+    });
+  } catch (error) {
+    console.error('Error validating driver session', error);
+    res.status(500).json({ message: 'Erreur lors de la validation de la session chauffeur' });
+  }
+});
+
 app.post('/api/drivers/login', async (req, res) => {
   try {
     const { driverId, password } = req.body || {};
@@ -1944,6 +2282,8 @@ app.post('/api/drivers/login', async (req, res) => {
       }
     }
 
+    const token = createDriverSession(driver);
+
     res.json({
       id: driver.id,
       firstName: driver.first_name,
@@ -1951,6 +2291,7 @@ app.post('/api/drivers/login', async (req, res) => {
       email: driver.email,
       phone: driver.phone,
       hasPassword,
+      token,
     });
   } catch (error) {
     console.error('Error validating driver login', error);
@@ -2025,6 +2366,28 @@ app.delete('/api/drivers/:id/password', async (req, res) => {
 
 app.get('/api/courses', async (req, res) => {
   try {
+    const requestedDriverId =
+      typeof req.query.driverId !== 'undefined' && req.query.driverId !== 'all'
+        ? Number.parseInt(req.query.driverId, 10)
+        : null;
+
+    if (req.headers['x-admin-token']) {
+      const sessionInfo = await enforceAdminSession(req, res);
+      if (!sessionInfo) {
+        return;
+      }
+    } else {
+      if (!Number.isInteger(requestedDriverId)) {
+        res.status(401).json({ message: 'Authentification requise pour consulter ces courses.' });
+        return;
+      }
+
+      const sessionInfo = await enforceDriverSession(req, res, { requireDriverId: requestedDriverId });
+      if (!sessionInfo) {
+        return;
+      }
+    }
+
     const rows = await fetchCoursesWithFilters(req.query);
     res.json(rows.map((row) => mapCourseRow(row)));
   } catch (error) {
@@ -2235,11 +2598,16 @@ app.post('/api/courses', async (req, res) => {
     const creator = user || 'LS';
     await logActivity(course.id, 'created', creator, { createdBy: creator });
 
+    const summary = buildCourseNotificationSummary(course);
+    const notification = buildCourseNotificationMessage('created', course);
+
     res.status(201).json(course);
     broadcastEvent('courses:changed', {
       action: 'created',
       courseId: course.id,
       driverId: course.driver_id,
+      summary,
+      notification,
     });
   } catch (error) {
     console.error('Error creating course', error);
@@ -2286,11 +2654,16 @@ app.put('/api/courses/:id', async (req, res) => {
     await logActivity(courseId, 'modified', user || 'LS', 'Course modifiée');
 
     const updated = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    const summary = buildCourseNotificationSummary(updated);
+    const notification = buildCourseNotificationMessage('updated', updated);
+
     res.json(updated);
     broadcastEvent('courses:changed', {
       action: 'updated',
       courseId: updated.id,
       driverId: updated.driver_id,
+      summary,
+      notification,
     });
   } catch (error) {
     console.error('Error updating course', error);
@@ -2317,11 +2690,17 @@ app.delete('/api/courses/:id', async (req, res) => {
 
     await db.run('DELETE FROM courses WHERE id = ?', [courseId]);
 
+    const deletedCourse = { ...existing, status: 'deleted' };
+    const summary = buildCourseNotificationSummary(deletedCourse);
+    const notification = buildCourseNotificationMessage('deleted', deletedCourse);
+
     res.status(204).send();
     broadcastEvent('courses:changed', {
       action: 'deleted',
       courseId: Number(courseId),
       driverId: existing.driver_id,
+      summary,
+      notification,
     });
   } catch (error) {
     console.error('Error deleting course', error);
@@ -2343,11 +2722,17 @@ app.post('/api/courses/:id/archive', async (req, res) => {
     await db.run('UPDATE courses SET archived_at = ?, updated_at = ? WHERE id = ?', [archivedAt, archivedAt, courseId]);
     await logActivity(courseId, 'archived', user || 'LS', 'Course archivée');
 
+    const updatedCourse = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    const summary = buildCourseNotificationSummary(updatedCourse);
+    const notification = buildCourseNotificationMessage('archived', updatedCourse);
+
     res.json({ message: 'Course archivée', archivedAt });
     broadcastEvent('courses:changed', {
       action: 'archived',
       courseId: Number(courseId),
       driverId: course.driver_id,
+      summary,
+      notification,
     });
   } catch (error) {
     console.error('Error archiving course', error);
@@ -2373,11 +2758,17 @@ app.post('/api/courses/:id/unarchive', async (req, res) => {
     await db.run('UPDATE courses SET archived_at = NULL, updated_at = ? WHERE id = ?', [updatedAt, courseId]);
     await logActivity(courseId, 'restored', user || 'LS', 'Course désarchivée');
 
+    const updatedCourse = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    const summary = buildCourseNotificationSummary(updatedCourse);
+    const notification = buildCourseNotificationMessage('restored', updatedCourse);
+
     res.json({ message: 'Course restaurée' });
     broadcastEvent('courses:changed', {
       action: 'restored',
       courseId: Number(courseId),
       driverId: course.driver_id,
+      summary,
+      notification,
     });
   } catch (error) {
     console.error('Error unarchiving course', error);
@@ -2397,6 +2788,13 @@ app.post('/api/courses/:id/report-issue', async (req, res) => {
 
     if (!driverId || !Number.isInteger(Number(driverId))) {
       return res.status(400).json({ message: 'Chauffeur requis pour signaler un problème.' });
+    }
+
+    const driverSession = await enforceDriverSession(req, res, {
+      requireDriverId: Number(driverId),
+    });
+    if (!driverSession) {
+      return;
     }
 
     const course = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
@@ -2449,11 +2847,17 @@ app.post('/api/courses/:id/report-issue', async (req, res) => {
       console.error("Erreur lors de l'envoi de la notification de problème", emailError);
     }
 
+    const updatedCourse = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    const summary = buildCourseNotificationSummary(updatedCourse);
+    const notification = buildCourseNotificationMessage('issue_reported', updatedCourse);
+
     res.json({ message: 'Problème signalé', email: emailResult });
     broadcastEvent('courses:changed', {
       action: 'issue_reported',
       courseId,
       driverId: course.driver_id,
+      summary,
+      notification,
     });
   } catch (error) {
     console.error('Error reporting course issue', error);
@@ -2469,6 +2873,20 @@ app.post('/api/courses/:id/complete', async (req, res) => {
     const course = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
     if (!course) {
       return res.status(404).json({ message: 'Course introuvable' });
+    }
+
+    if (req.headers['x-admin-token']) {
+      const sessionInfo = await enforceAdminSession(req, res);
+      if (!sessionInfo) {
+        return;
+      }
+    } else {
+      const sessionInfo = await enforceDriverSession(req, res, {
+        requireDriverId: course.driver_id,
+      });
+      if (!sessionInfo) {
+        return;
+      }
     }
 
     const driver = await db.get('SELECT * FROM drivers WHERE id = ?', [course.driver_id]);
@@ -2489,6 +2907,10 @@ app.post('/api/courses/:id/complete', async (req, res) => {
 
     await mergeCreationAndCompletionActivity(courseId, userInitials || 'LS', completionComments || null);
 
+    const updatedCourse = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    const summary = buildCourseNotificationSummary(updatedCourse);
+    const notification = buildCourseNotificationMessage('completed', updatedCourse);
+
     const completionEmail = await sendCompletionEmail(
       { ...course, photo_path: photoPath },
       driver,
@@ -2501,12 +2923,72 @@ app.post('/api/courses/:id/complete', async (req, res) => {
       action: 'completed',
       courseId: Number(courseId),
       driverId: course.driver_id,
+      summary,
+      notification,
     });
   } catch (error) {
     console.error('Error completing course', error);
     res
       .status(500)
       .json({ message: error.message || 'Erreur lors de la validation de la course' });
+  }
+});
+
+app.post('/api/courses/:id/reopen', async (req, res) => {
+  try {
+    const courseId = req.params.id;
+    const { user } = req.body || {};
+
+    const course = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    if (!course) {
+      return res.status(404).json({ message: 'Course introuvable' });
+    }
+
+    if (course.status !== COURSE_STATUS_COMPLETED) {
+      return res.status(400).json({ message: 'Seules les courses validées peuvent être remises en attente.' });
+    }
+
+    if (course.photo_path) {
+      try {
+        await fs.promises.unlink(course.photo_path);
+      } catch (error) {
+        if (error.code !== 'ENOENT') {
+          console.warn(`Impossible de supprimer la photo ${course.photo_path}`, error.message);
+        }
+      }
+    }
+
+    const updatedAt = new Date().toISOString();
+    await db.run(
+      `UPDATE courses
+          SET status = ?,
+              completion_comments = NULL,
+              photo_path = NULL,
+              issue_reported_at = NULL,
+              issue_report_comment = NULL,
+              issue_reported_by = NULL,
+              updated_at = ?
+        WHERE id = ?`,
+      [COURSE_STATUS_PENDING, updatedAt, courseId]
+    );
+
+    await logActivity(courseId, 'reopened', user || 'LS', 'Course réouverte');
+
+    const updatedCourse = await db.get('SELECT * FROM courses WHERE id = ?', [courseId]);
+    const summary = buildCourseNotificationSummary(updatedCourse);
+    const notification = buildCourseNotificationMessage('reopened', updatedCourse);
+
+    res.json({ message: 'Course remise en attente' });
+    broadcastEvent('courses:changed', {
+      action: 'reopened',
+      courseId: Number(courseId),
+      driverId: course.driver_id,
+      summary,
+      notification,
+    });
+  } catch (error) {
+    console.error('Error reopening course', error);
+    res.status(500).json({ message: 'Erreur lors de la remise en attente de la course' });
   }
 });
 
@@ -2547,6 +3029,13 @@ app.get('/api/messages/unread-count', async (req, res) => {
       const driverId = Number.parseInt(req.query.driverId, 10);
       if (!Number.isInteger(driverId)) {
         return res.status(400).json({ message: 'Identifiant chauffeur invalide.' });
+      }
+
+      const sessionInfo = await enforceDriverSession(req, res, {
+        requireDriverId: driverId,
+      });
+      if (!sessionInfo) {
+        return;
       }
 
       const driver = await getDriverSummary(driverId);
@@ -2663,6 +3152,11 @@ app.get('/api/messages/threads/:driverId', async (req, res) => {
       if (driverIdQuery !== driverId) {
         return res.status(403).json({ message: 'Accès refusé.' });
       }
+
+      const sessionInfo = await enforceDriverSession(req, res, { requireDriverId: driverId });
+      if (!sessionInfo) {
+        return;
+      }
     }
 
     const driver = await getDriverSummary(driverId);
@@ -2736,9 +3230,13 @@ app.post('/api/messages', async (req, res) => {
       senderId = sessionInfo.admin.id;
       adminReadAt = now;
     } else if (senderType === 'driver') {
-      if (Number(driverId) !== Number(req.body.driverId)) {
-        return res.status(403).json({ message: 'Accès refusé.' });
+      const sessionInfo = await enforceDriverSession(req, res, {
+        requireDriverId: Number(driverId),
+      });
+      if (!sessionInfo) {
+        return;
       }
+      senderId = sessionInfo.driverId;
       driverReadAt = now;
     } else {
       return res.status(400).json({ message: "Type d'envoyeur invalide." });
@@ -2752,11 +3250,13 @@ app.post('/api/messages', async (req, res) => {
 
     const row = await messagesDb.get('SELECT * FROM messages WHERE id = ?', [insertResult.lastID]);
     const message = await serializeMessage(row);
+    const notification = buildMessageNotificationPayload(senderType, message);
 
     broadcastEvent('messages:new', {
       driverId: Number(driverId),
       senderType,
       message,
+      notification,
     });
 
     res.status(201).json(message);
@@ -2790,9 +3290,9 @@ app.post('/api/messages/:driverId/read', async (req, res) => {
         return;
       }
     } else {
-      const driver = await getDriverSummary(driverId);
-      if (!driver) {
-        return res.status(404).json({ message: 'Chauffeur introuvable.' });
+      const sessionInfo = await enforceDriverSession(req, res, { requireDriverId: driverId });
+      if (!sessionInfo) {
+        return;
       }
     }
 

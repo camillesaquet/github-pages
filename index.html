@@ -2,7 +2,7 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta id="viewport-meta" name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Agri Holann - Gestion des chauffeurs</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link
@@ -14,7 +14,7 @@
     />
     <link rel="stylesheet" href="assets/css/styles.css" />
   </head>
-  <body class="bg-gray-50 font-sans">
+  <body class="bg-gray-50 font-sans antialiased">
     <div id="login-page" class="min-h-screen flex flex-col justify-center items-center p-4">
       <div class="w-full max-w-md bg-white rounded-lg shadow-md overflow-hidden fade-in">
         <div class="bg-green-600 py-4 px-6">
@@ -180,7 +180,7 @@
 
     <div id="driver-dashboard" class="min-h-screen hidden">
       <header class="bg-green-600 text-white shadow-md">
-        <div class="container mx-auto px-4 py-3 flex justify-between items-center">
+        <div class="app-shell py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 class="text-xl font-bold">Agri Holann</h1>
             <p id="driver-name" class="text-sm opacity-90">Jean Dupont</p>
@@ -194,35 +194,98 @@
         </div>
       </header>
 
-      <main class="container mx-auto px-4 py-6">
+      <main class="app-shell py-6">
         <div class="flex border-b border-gray-200 mb-6">
           <button id="today-tab" class="tab-button tab-button--active">Aujourd'hui</button>
           <button id="week-tab" class="tab-button">Semaine</button>
-          <button id="new-course-tab" class="tab-button ml-auto">
+          <button id="new-course-tab" class="tab-button ml-auto" data-admin-only="true">
             <i class="fas fa-plus mr-1"></i> Nouvelle course
           </button>
         </div>
 
-        <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
-          <div class="flex items-center gap-2">
-            <span class="text-sm font-medium text-gray-600">Affichage</span>
-            <div class="flex gap-2">
-              <button type="button" class="filter-chip" data-driver-layout="cards">
-                <i class="fas fa-th-large mr-1"></i> Cartes
-              </button>
-              <button type="button" class="filter-chip" data-driver-layout="list">
-                <i class="fas fa-list mr-1"></i> Liste
-              </button>
-            </div>
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div class="text-xs text-gray-500 max-w-md leading-snug">
+            Retrouvez uniquement l'essentiel : adaptez l'affichage à vos besoins depuis le centre de préférences.
           </div>
-          <div class="flex items-center gap-2">
-            <span class="text-sm font-medium text-gray-600">Lisibilité</span>
-            <div class="flex gap-2">
-              <button type="button" class="filter-chip" data-driver-density="comfortable">Standard</button>
-              <button type="button" class="filter-chip" data-driver-density="contrast">Contraste</button>
-            </div>
-          </div>
+          <button
+            id="driver-preferences-toggle"
+            type="button"
+            class="btn-tertiary whitespace-nowrap"
+            aria-expanded="false"
+            aria-controls="driver-preferences-panel"
+          >
+            <i class="fas fa-sliders mr-2"></i> Préférences d'affichage
+          </button>
         </div>
+
+        <section id="driver-preferences-panel" class="driver-preferences hidden" aria-hidden="true">
+          <div class="driver-preferences__header">
+            <div>
+              <h3 class="driver-preferences__title">Préférences d'affichage</h3>
+              <p class="driver-preferences__subtitle">
+                Ajustez vos options pour les vues quotidiennes ou hebdomadaires.
+              </p>
+            </div>
+            <button id="driver-preferences-close" class="driver-preferences__close" aria-label="Fermer les préférences">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <div class="driver-preferences__tabs" role="tablist">
+            <button
+              type="button"
+              class="driver-preferences__tab driver-preferences__tab--active"
+              data-driver-preferences-tab="today"
+              role="tab"
+              aria-selected="true"
+            >
+              Aujourd'hui
+            </button>
+            <button
+              type="button"
+              class="driver-preferences__tab"
+              data-driver-preferences-tab="week"
+              role="tab"
+              aria-selected="false"
+            >
+              Semaine
+            </button>
+          </div>
+          <div class="driver-preferences__content">
+            <div data-driver-preferences-panel="today" aria-hidden="false">
+              <div class="driver-preferences__section">
+                <h4>Disposition</h4>
+                <div class="driver-preferences__options">
+                  <button type="button" class="filter-chip" data-driver-layout="cards">
+                    <i class="fas fa-th-large mr-1"></i> Cartes
+                  </button>
+                  <button type="button" class="filter-chip" data-driver-layout="list">
+                    <i class="fas fa-list mr-1"></i> Liste
+                  </button>
+                </div>
+              </div>
+              <div class="driver-preferences__section">
+                <h4>Lisibilité</h4>
+                <div class="driver-preferences__options">
+                  <button type="button" class="filter-chip" data-driver-density="comfortable">Standard</button>
+                  <button type="button" class="filter-chip" data-driver-density="contrast">Contraste</button>
+                </div>
+              </div>
+            </div>
+            <div class="hidden" data-driver-preferences-panel="week" aria-hidden="true">
+              <div class="driver-preferences__section">
+                <h4>Disposition du planning</h4>
+                <div class="driver-preferences__options">
+                  <button type="button" class="filter-chip" data-driver-week-layout="list">
+                    <i class="fas fa-table-list mr-1"></i> Liste
+                  </button>
+                  <button type="button" class="filter-chip" data-driver-week-layout="schedule">
+                    <i class="fas fa-calendar-week mr-1"></i> Emploi du temps
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
 
         <div id="today-courses">
           <h2 class="section-title">Vos courses aujourd'hui</h2>
@@ -235,7 +298,7 @@
 
         <div id="week-courses" class="hidden">
           <h2 class="section-title">Vos courses cette semaine</h2>
-          <div class="overflow-x-auto">
+          <div id="week-table-wrapper" class="overflow-x-auto">
             <table class="responsive-table min-w-full divide-y divide-gray-200">
               <thead class="bg-gray-50">
                 <tr>
@@ -249,6 +312,7 @@
               <tbody id="week-list" class="bg-white divide-y divide-gray-200"></tbody>
             </table>
           </div>
+          <div id="week-schedule" class="hidden week-schedule-grid"></div>
           <div id="no-courses-week" class="empty-state hidden">
             <i class="fas fa-calendar-week text-4xl mb-3 opacity-30"></i>
             <p>Aucune course prévue cette semaine</p>
@@ -311,7 +375,7 @@
 
     <div id="admin-dashboard" class="min-h-screen hidden">
       <header class="bg-blue-600 text-white shadow-md">
-        <div class="container mx-auto px-4 py-3 flex justify-between items-center">
+        <div class="app-shell py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 class="text-xl font-bold">Agri Holann - Administration</h1>
             <p class="text-sm opacity-90">
@@ -328,7 +392,7 @@
         </div>
       </header>
 
-      <main class="container mx-auto px-4 py-6 space-y-6">
+      <main class="app-shell py-6 space-y-6">
         <div class="flex border-b border-gray-200">
           <button id="admin-planning-tab" class="admin-tab admin-tab--active">Planning</button>
           <button id="admin-archives-tab" class="admin-tab">Archives</button>
@@ -373,66 +437,66 @@
           </section>
 
           <section class="bg-white p-4 rounded-lg shadow-sm space-y-4">
-            <div class="grid grid-cols-1 xl:grid-cols-4 gap-4">
-              <div>
-                <label class="form-label" for="admin-driver-select">Chauffeur</label>
-                <select id="admin-driver-select" class="form-input">
-                  <option value="all">Tous les chauffeurs</option>
-                </select>
-              </div>
-              <div>
-                <label class="form-label" for="admin-status-filter">Statut</label>
-                <select id="admin-status-filter" class="form-input">
-                  <option value="all">Tous les statuts</option>
-                  <option value="pending">À faire</option>
-                  <option value="completed">Terminées</option>
-                  <option value="issue_reported">Signalements</option>
-                </select>
-              </div>
-              <div>
-                <label class="form-label" for="admin-merchandise-filter">Marchandise</label>
-                <select id="admin-merchandise-filter" class="form-input">
-                  <option value="all">Toutes</option>
-                  <option value="Céréales">Céréales</option>
-                  <option value="Légumes">Légumes</option>
-                  <option value="Fruits">Fruits</option>
-                  <option value="Engrais">Engrais</option>
-                  <option value="Autre">Autre</option>
-                </select>
-              </div>
-              <div>
-                <label class="form-label" for="admin-search-filter">Recherche</label>
-                <input
-                  type="search"
-                  id="admin-search-filter"
-                  class="form-input"
-                  placeholder="Départ, destination, commentaire..."
-                />
+            <div class="admin-pane-nav" role="tablist" aria-label="Affichage des options administrateur">
+              <button type="button" class="admin-subtab admin-subtab--active" data-admin-pane="core" role="tab">
+                <i class="fas fa-sliders-h mr-2"></i>Filtres essentiels
+              </button>
+              <button type="button" class="admin-subtab" data-admin-pane="advanced" role="tab">
+                <i class="fas fa-layer-group mr-2"></i>Options avancées
+              </button>
+              <button type="button" class="admin-subtab" data-admin-pane="tools" role="tab">
+                <i class="fas fa-toolbox mr-2"></i>Outils & exports
+              </button>
+            </div>
+
+            <div id="admin-pane-core" class="admin-pane admin-pane--active" role="tabpanel">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label class="form-label" for="admin-driver-select">Chauffeur</label>
+                  <select id="admin-driver-select" class="form-input">
+                    <option value="all">Tous les chauffeurs</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label" for="admin-status-filter">Statut</label>
+                  <select id="admin-status-filter" class="form-input">
+                    <option value="all">Tous les statuts</option>
+                    <option value="pending">À faire</option>
+                    <option value="completed">Terminées</option>
+                    <option value="issue_reported">Signalements</option>
+                  </select>
+                </div>
+                <div class="sm:col-span-2">
+                  <p class="text-sm text-gray-500 leading-relaxed">
+                    Ajustez rapidement la liste des courses. Les autres outils restent disponibles dans les onglets
+                    “Options avancées” et “Outils & exports”.
+                  </p>
+                </div>
               </div>
             </div>
 
-            <div class="grid grid-cols-1 xl:grid-cols-4 gap-4 items-end">
-              <div>
-                <span class="form-label">Période</span>
-                <div class="flex flex-wrap gap-2 mt-2">
-                  <button type="button" class="filter-chip" data-admin-range="day">Aujourd'hui</button>
-                  <button type="button" class="filter-chip" data-admin-range="week">7 jours</button>
-                  <button type="button" class="filter-chip" data-admin-range="month">30 jours</button>
-                  <button type="button" class="filter-chip" data-admin-range="custom">Personnalisé</button>
-                  <button type="button" class="filter-chip" data-admin-range="all">Tout afficher</button>
-                </div>
-              </div>
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div id="admin-pane-advanced" class="admin-pane hidden" role="tabpanel" aria-hidden="true">
+              <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 <div>
-                  <label class="form-label" for="admin-from">Du</label>
-                  <input type="date" id="admin-from" class="form-input" />
+                  <label class="form-label" for="admin-merchandise-filter">Marchandise</label>
+                  <select id="admin-merchandise-filter" class="form-input">
+                    <option value="all">Toutes</option>
+                    <option value="Céréales">Céréales</option>
+                    <option value="Légumes">Légumes</option>
+                    <option value="Fruits">Fruits</option>
+                    <option value="Engrais">Engrais</option>
+                    <option value="Autre">Autre</option>
+                  </select>
                 </div>
                 <div>
-                  <label class="form-label" for="admin-to">Au</label>
-                  <input type="date" id="admin-to" class="form-input" />
+                  <label class="form-label" for="admin-search-filter">Recherche</label>
+                  <input
+                    type="search"
+                    id="admin-search-filter"
+                    class="form-input"
+                    placeholder="Départ, destination, commentaire..."
+                  />
                 </div>
-              </div>
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label class="form-label" for="admin-issue-filter">Problèmes</label>
                   <select id="admin-issue-filter" class="form-input">
@@ -449,20 +513,48 @@
                     <option value="without">Sans photo</option>
                   </select>
                 </div>
+                <div class="xl:col-span-2">
+                  <span class="form-label">Période</span>
+                  <div class="flex flex-wrap gap-2 mt-2">
+                    <button type="button" class="filter-chip" data-admin-range="day">Aujourd'hui</button>
+                    <button type="button" class="filter-chip" data-admin-range="week">7 jours</button>
+                    <button type="button" class="filter-chip" data-admin-range="month">30 jours</button>
+                    <button type="button" class="filter-chip" data-admin-range="custom">Personnalisé</button>
+                    <button type="button" class="filter-chip" data-admin-range="all">Tout afficher</button>
+                  </div>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 xl:col-span-2">
+                  <div>
+                    <label class="form-label" for="admin-from">Du</label>
+                    <input type="date" id="admin-from" class="form-input" />
+                  </div>
+                  <div>
+                    <label class="form-label" for="admin-to">Au</label>
+                    <input type="date" id="admin-to" class="form-input" />
+                  </div>
+                </div>
               </div>
-              <div class="flex flex-wrap gap-2 justify-end">
-                <button id="admin-reset-filters" class="btn-tertiary text-sm">
-                  <i class="fas fa-undo mr-1"></i> Réinitialiser
-                </button>
-                <button id="admin-export-pdf" class="btn-secondary text-sm">
-                  <i class="fas fa-file-pdf mr-1"></i> Export PDF
-                </button>
-                <button id="admin-export-excel" class="btn-secondary text-sm">
-                  <i class="fas fa-file-excel mr-1"></i> Export Excel
-                </button>
-                <button id="new-course-admin" class="btn-admin">
-                  <i class="fas fa-plus mr-1"></i> Nouvelle course
-                </button>
+            </div>
+
+            <div id="admin-pane-tools" class="admin-pane hidden" role="tabpanel" aria-hidden="true">
+              <div class="space-y-4">
+                <p class="text-sm text-gray-500 leading-relaxed">
+                  Retrouver ici les actions ponctuelles pour partager ou remettre à zéro le planning.
+                </p>
+                <div class="flex flex-wrap gap-2">
+                  <button id="admin-reset-filters" class="btn-tertiary text-sm">
+                    <i class="fas fa-undo mr-1"></i> Réinitialiser
+                  </button>
+                  <button id="admin-export-pdf" class="btn-secondary text-sm">
+                    <i class="fas fa-file-pdf mr-1"></i> Export PDF
+                  </button>
+                  <button id="admin-export-excel" class="btn-secondary text-sm">
+                    <i class="fas fa-file-excel mr-1"></i> Export Excel
+                  </button>
+                  <button id="new-course-admin" class="btn-admin">
+                    <i class="fas fa-plus mr-1"></i> Nouvelle course
+                  </button>
+                </div>
               </div>
             </div>
           </section>
@@ -760,17 +852,9 @@
             <div class="flex flex-wrap items-center justify-between mb-3 gap-2">
               <div class="flex items-center gap-2 text-sm text-gray-600">
                 <i class="fas fa-sync-alt text-gray-400"></i>
-                <span>Sélectionner la caméra</span>
+                <span>La caméra arrière est utilisée automatiquement.</span>
               </div>
-              <div class="flex items-center gap-2">
-                <button id="switch-camera" type="button" class="btn-tertiary text-sm">
-                  <i class="fas fa-exchange-alt mr-2"></i> Inverser
-                </button>
-                <select id="camera-facing-select" class="form-input text-sm w-40">
-                  <option value="environment">Caméra arrière</option>
-                  <option value="user">Caméra avant</option>
-                </select>
-              </div>
+              <p class="text-xs text-gray-500">Assurez-vous que le document est bien éclairé.</p>
             </div>
             <div class="bg-gray-100 rounded-md h-64 flex items-center justify-center mb-3">
               <video id="camera" class="w-full h-full object-cover rounded-md hidden" playsinline></video>
@@ -872,7 +956,19 @@
 
     <div id="messaging-fab" class="messaging-fab hidden">
       <button id="messaging-toggle" class="messaging-fab__button" aria-label="Ouvrir la messagerie">
-        <i class="fas fa-comments"></i>
+        <span class="messaging-fab__logo" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path
+              d="M16 3C8.8203 3 3 8.0438 3 14.375C3 17.9156 5.04453 21.0484 8.24219 22.9688L7.0625 28.5L13.5625 24.6875C14.3477 24.8125 15.1641 24.875 16 24.875C23.1797 24.875 29 19.8313 29 13.5C29 7.16875 23.1797 3 16 3Z"
+              fill="currentColor"
+            />
+            <path
+              d="M9.53125 12.9688H22.4688C23.3 12.9688 23.9688 13.6375 23.9688 14.4688C23.9688 15.3 23.3 15.9688 22.4688 15.9688H9.53125C8.7 15.9688 8.03125 15.3 8.03125 14.4688C8.03125 13.6375 8.7 12.9688 9.53125 12.9688ZM9.53125 17.875H16.9688C17.8 17.875 18.4688 18.5437 18.4688 19.375C18.4688 20.2063 17.8 20.875 16.9688 20.875H9.53125C8.7 20.875 8.03125 20.2063 8.03125 19.375C8.03125 18.5437 8.7 17.875 9.53125 17.875Z"
+              fill="#F8F9FB"
+            />
+          </svg>
+        </span>
+        <span class="messaging-fab__label">Chat</span>
         <span id="messaging-unread" class="messaging-fab__badge hidden">0</span>
       </button>
     </div>
@@ -915,6 +1011,24 @@
       </div>
     </div>
 
-    <script type="module" src="assets/js/app.js"></script>
-  </body>
+    <div id="notification-permission" class="notification-permission hidden" role="dialog" aria-modal="true">
+      <div class="notification-permission__panel">
+        <div class="notification-permission__icon">
+          <i class="fas fa-bell"></i>
+        </div>
+        <h3 class="notification-permission__title">Activer les notifications</h3>
+        <p class="notification-permission__text">
+          Recevez une alerte instantanée lorsqu'une nouvelle course, un message ou une mise à jour importante vous concerne.
+        </p>
+        <div class="notification-permission__actions">
+          <button id="notification-allow" class="btn-primary w-full">Autoriser</button>
+          <button id="notification-dismiss" class="btn-secondary w-full">Plus tard</button>
+        </div>
+    </div>
+  </div>
+
+  <div id="realtime-toast-region" class="realtime-toast-region" aria-live="polite" aria-atomic="true"></div>
+
+  <script type="module" src="assets/js/app.js"></script>
+</body>
 </html>
